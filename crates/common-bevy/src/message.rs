@@ -176,6 +176,14 @@ pub enum Event {
     /// Server → Client: what the wagon `ent` looked at holds, or None
     /// where none stands near enough. Sent to its owner only.
     Loaded { ent: Entity, load: Option<Vec<common::Stack>> },
+    /// Client → Server (Try): `ent` looks at the storehouse standing
+    /// beside it, and leaves in it so many of a material from its bag,
+    /// where `give` names them, or takes so many of its own out of it,
+    /// where `take` does
+    Store { ent: Entity, give: Option<common::Stack>, take: Option<common::Stack> },
+    /// Server → Client: what `ent` has in the storehouse it looked at,
+    /// or None where none stands near enough. Sent to its owner only.
+    Stored { ent: Entity, held: Option<Vec<common::Stack>> },
     /// Client → Server (Try): `ent` hands the settler beside it the map
     /// in its main hand and sends the camp's wagon by it to the hub
     /// known by the tile `to`
@@ -282,6 +290,8 @@ impl Event {
             | Event::Wagon { ent, .. }
             | Event::Load { ent, .. }
             | Event::Loaded { ent, .. }
+            | Event::Store { ent, .. }
+            | Event::Stored { ent, .. }
             | Event::Send { ent, .. }
             | Event::Wants { ent, .. }
             | Event::Sheltered { ent, .. }

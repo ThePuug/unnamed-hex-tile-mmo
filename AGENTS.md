@@ -393,7 +393,8 @@ tile of a lattice the world fixes and the wall the tightest outline
 round them (`qrz::outline`), and `common_bevy::hubs::Hubs` holds every
 hub by it. Nothing changes a hub's sites or its wall but a plan a player
 asked its settler for: `Hubs::grown` and `Hubs::shrunk` say what one
-would do and `Hubs::carry` does it. Players coming and going change who
+would do and `Hubs::carry` does it. The one plan no player asks for
+lays an essential on a hub laid before hubs had it (`Hubs::completed`). Players coming and going change who
 lives in its homes, and so the wall its people hold, never its ground. A
 hearth is laid on the build site nearest the tile faced, on no hub's
 ground, and a hub taken in keeps none of its own. A second rule for
@@ -435,6 +436,14 @@ lies now, kept up as tiles change, and a way found on a map
 against it a leg at a time (`Chart::open`). Whatever travels by a map
 goes that way: plan on the map, try on `lies`, and never plan on `lies`,
 or a blockade stops no one.
+
+**Stores.** What a hub's storehouse holds is each player's own
+(`haul::Depots`, a stack and its player, `haul::Owned`): what it left
+there and what wagons brought of its loading, since a wagon's load
+says whose each stack is from the bag to the storehouse. A player takes
+its own and what is no one's, never another's
+(`settlers::try_store`). A path that loads, hauls or stores a stack
+without its player makes it anyone's.
 
 **Logistics.** A camp's wagon is sent by a map to another hub
 (`server::systems::haul`), and its `Trip` is the calendar's daytime

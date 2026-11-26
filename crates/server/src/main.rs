@@ -131,6 +131,7 @@ fn main() {
             crate::systems::settlers::tend_camps,
             crate::systems::settlers::try_hail,
             crate::systems::settlers::try_load,
+            crate::systems::settlers::try_store,
             crate::systems::settlers::try_plan,
             crate::systems::settlers::try_send,
             crate::systems::settlers::heed_settings,

@@ -443,6 +443,16 @@ impl Hubs {
         Some(self.plan(id, after, Vec::new()))
     }
 
+    /// What laying each essential hub `id` lacks would do, on the next
+    /// open site beside it, or none where it lacks none: the plan of a
+    /// hub laid before every hub had that essential, which no player
+    /// asks for.
+    pub fn completed(&self, id: HubId) -> Option<Plan> {
+        let held = self.hubs.get(&id)?;
+        let hub = sites::completed(&held.hub)?;
+        Some(self.plan(id, vec![(id, hub, held.took.clone())], Vec::new()))
+    }
+
     /// Does what `plan` said: its hubs are as it leaves them, and those it
     /// took in are no more.
     pub fn carry(&mut self, plan: &Plan) {
@@ -496,7 +506,7 @@ impl Hubs {
     pub fn recall(&mut self, hubs: Vec<Kept>, residents: Vec<(Identity, Option<(i32, i32)>)>) {
         for kept in hubs {
             let sites: Vec<Site> = kept.sites.iter().map(|&(q, r, what)| Site { at: (q, r), what: Standing::kept_as(what).unwrap_or(Standing::Home), lived: Lived::Empty }).collect();
-            let tier = (0..).take_while(|&tier| sites::sites_for(tier) <= sites.len()).last().unwrap_or(0);
+            let tier = sites::tier_built(sites.len());
             let mut hub = sites::Hub { sites, tier };
             sites::peopled(&mut hub.sites);
             let id = HubId(kept.id.0, kept.id.1);

@@ -102,6 +102,7 @@ pub fn request(
     menu: Res<crate::plugins::shell::menu::GameMenu>,
     focus: Res<crate::systems::focus::NumpadFocus>,
     window: Res<LootWindow>,
+    loading: Res<crate::systems::settlers::Loading>,
     map: Res<Map>,
     predicted: crate::systems::movement::Predicted,
     player: Query<(Entity, &Heading), With<Actor>>,
@@ -114,8 +115,10 @@ pub fn request(
     // A view has no character, and nothing to gather with
     let (Ok((ent, heading)), Some(position)) = (player.single(), predicted.position()) else { return };
     // An open loot window works the numpad while it is the panel opened
-    // last.
-    if window.cells.is_some() && focus.has(crate::systems::focus::Panel::Loot) {
+    // last. One open on a storehouse is the storehouse's to work
+    // (`settlers::load`).
+    let stored = loading.what() == Some(crate::systems::settlers::Kept::Store);
+    if window.cells.is_some() && !stored && focus.has(crate::systems::focus::Panel::Loot) {
         for (slot, key) in ENTRY_KEYS.iter().take(common::TILE_SLOTS as usize).enumerate() {
             if keys.take(*key, "Take the pile in this cell") {
                 writer.write(Try { event: Event::Take { ent, slot: Some(slot as u8) } });

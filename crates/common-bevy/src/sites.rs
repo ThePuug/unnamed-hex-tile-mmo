@@ -26,10 +26,10 @@ pub const PAST: f64 = 3.0;
 pub const STEP: u32 = 3;
 
 /// What a camp raises on the sites round its hearth, in turn.
-pub const CAMP: [Standing; 4] = [Standing::Post, Standing::Home, Standing::Home, Standing::Wagon];
+pub const CAMP: [Standing; 5] = [Standing::Post, Standing::Home, Standing::Home, Standing::Wagon, Standing::Store];
 
 /// What a hub is never without, besides its homes.
-pub const ESSENTIALS: [Standing; 3] = [Standing::Hearth, Standing::Post, Standing::Wagon];
+pub const ESSENTIALS: [Standing; 4] = [Standing::Hearth, Standing::Post, Standing::Wagon, Standing::Store];
 
 /// The fewest sites a hub of `players` at home is: its essentials, and
 /// two homes for each player, theirs and their settler's, or two with
@@ -48,10 +48,12 @@ pub enum Standing {
     Post,
     Wagon,
     Home,
+    /// The storehouse.
+    Store,
 }
 
 impl Standing {
-    pub const ALL: [Standing; 4] = [Standing::Hearth, Standing::Post, Standing::Wagon, Standing::Home];
+    pub const ALL: [Standing; 5] = [Standing::Hearth, Standing::Post, Standing::Wagon, Standing::Home, Standing::Store];
 
     /// The number a store keeps it by, given once: a new thing to stand
     /// on a site takes the next never used.
@@ -61,6 +63,7 @@ impl Standing {
             Standing::Post => 2,
             Standing::Wagon => 3,
             Standing::Home => 4,
+            Standing::Store => 5,
         }
     }
 
@@ -137,11 +140,30 @@ pub fn sized_for(tier: u32) -> u32 {
     STEP.pow(tier)
 }
 
-/// How many build sites tier `tier` has: a camp's hearth, post and wagon,
-/// and two homes for each player it is sized for, theirs and that of the
-/// settler who comes with them.
+/// How many build sites tier `tier` has: a hub's essentials, and two
+/// homes for each player it is sized for, theirs and that of the settler
+/// who comes with them.
 pub fn sites_for(tier: u32) -> usize {
-    3 + 2 * sized_for(tier) as usize
+    ESSENTIALS.len() + 2 * sized_for(tier) as usize
+}
+
+/// The tier a hub of `count` sites is built out to.
+pub fn tier_built(count: usize) -> u32 {
+    (0..).take_while(|&tier| sites_for(tier) <= count).last().unwrap_or(0)
+}
+
+/// `hub` with each essential it lacks on the next open site beside it
+/// ([`next`]), or none where it lacks none: what a hub laid before every
+/// hub had that essential comes to.
+pub fn completed(hub: &Hub) -> Option<Hub> {
+    let mut sites = hub.sites.clone();
+    for what in ESSENTIALS {
+        if sites.iter().all(|site| site.what != what) {
+            let at = next(&sites)?;
+            sites.push(Site { at, what, lived: Lived::Empty });
+        }
+    }
+    (sites.len() > hub.sites.len()).then(|| Hub { tier: tier_built(sites.len()).max(hub.tier), sites })
 }
 
 fn tiles(sites: &[Site]) -> Vec<(i32, i32)> {
@@ -510,13 +532,20 @@ mod tests {
         homes
     }
 
-    /// A camp is a hearth, a post, a wagon and two homes on sites beside
-    /// each other, its settler in one home and the other open.
+    /// A camp is a hearth, a post, a wagon, a storehouse and two homes on
+    /// sites beside each other, its settler in one home and the other
+    /// open.
     #[test]
-    fn a_camp_is_five_sites() {
+    fn a_camp_is_its_essentials_and_two_homes() {
         let camp = camp(site_near((7, -11)));
         let count = |what| camp.sites.iter().filter(|site| site.what == what).count();
-        assert_eq!((count(Standing::Hearth), count(Standing::Post), count(Standing::Wagon), count(Standing::Home)), (1, 1, 1, 2));
+        assert!(ESSENTIALS.into_iter().all(|what| count(what) == 1));
+        assert_eq!((count(Standing::Home), camp.sites.len()), (2, sites_for(0)));
+        assert_eq!(completed(&camp), None, "it lacks nothing");
+        let before = Hub { sites: camp.sites.iter().copied().filter(|site| site.what != Standing::Store).collect(), tier: 0 };
+        let since = completed(&before).expect("a camp laid before camps had a storehouse lacks one");
+        assert_eq!(since.sites[..before.sites.len()], before.sites[..], "nothing that stood moves");
+        assert!(since.sites.len() == camp.sites.len() && since.sites.iter().any(|site| site.what == Standing::Store && on_site(site.at)));
         assert!(camp.sites.iter().all(|site| on_site(site.at)));
         assert_eq!((players(&camp.sites), settlers(&camp.sites)), (0, 1));
         let ground = ground(&camp.sites);
@@ -628,7 +657,8 @@ mod tests {
     #[test]
     fn a_shrink_keeps_the_homes_players_live_in() {
         let empty = shrink(&lived(town(), |_| Vec::new())).expect("one settler does not hold a town");
-        assert_eq!((empty.len(), empty[0].sites.len(), empty[0].tier), (1, 1 + CAMP.len(), 0));
+        assert_eq!((empty.len(), empty[0].tier), (1, 0));
+        assert!(empty[0].sites.len() >= least(0) && ground(&empty[0].sites).wall.len() <= held(0), "what a settler holds, and no less than a camp");
 
         for count in [1, 3, 9] {
             let hub = lived(town(), |homes| east(homes).into_iter().take(count).collect());
@@ -660,7 +690,7 @@ mod tests {
             for what in ESSENTIALS {
                 assert_eq!(part.sites.iter().filter(|site| site.what == what).count(), 1, "each part has its {what:?}");
             }
-            assert_eq!(part.sites.iter().filter(|site| site.what == Standing::Home).count(), 2, "and a home for its player and its settler");
+            assert!(part.sites.iter().filter(|site| site.what == Standing::Home).count() >= 2, "and a home for its player and its settler");
             assert!(ground(&part.sites).wall.len() <= held(1));
         }
         let stood: HashSet<(i32, i32)> = parts.iter().flat_map(|part| part.sites.iter().map(|site| site.at)).collect();

@@ -377,6 +377,7 @@ pub fn write_try(
                 | Event::Plan { .. }
                 | Event::Draw { .. }
                 | Event::Load { .. }
+                | Event::Store { .. }
                 | Event::Send { .. }
                 | Event::UseAbility { .. }
                 | Event::RespecAttributes { .. }
@@ -438,6 +439,7 @@ fn route(event: &Event) -> Option<Route> {
         | Event::Planned { ent, .. }
         | Event::Wagon { ent, .. }
         | Event::Loaded { ent, .. }
+        | Event::Stored { ent, .. }
         | Event::Charted { ent, .. }
         | Event::Sheltered { ent, .. }
         | Event::Loot { ent, .. } => Some(Route::Owner(*ent)),

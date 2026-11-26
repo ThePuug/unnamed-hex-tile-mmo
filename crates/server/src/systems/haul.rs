@@ -12,15 +12,19 @@
 //! where a hub stood; the last stretch is found on the ground as it
 //! lies, to the hub standing there now ([`hub_at`]), so a hub that moved
 //! is still come to. The wagon leaves what it carried in that hub's
-//! depot and goes home by the way it came; where no hub stands there any
-//! more it goes home with its load.
+//! storehouse and goes home by the way it came; where no hub stands there
+//! any more it goes home with its load.
 //!
-//! Unbuilt: taking from a depot.
+//! What a storehouse holds is each player's own ([`Depots`]): what it
+//! left there itself, and what wagons brought of what it loaded. A
+//! player takes its own out and no other player's, to carry or to load
+//! on a wagon again. What is no one's is anyone's to take, and its
+//! taker's from then.
 
 use std::{collections::HashMap, time::Duration};
 
 use bevy::prelude::*;
-use common::Stack;
+use common::{network::Identity, Stack};
 use common_bevy::{
     chart::{reversed, Chart, Leg},
     hubs::{HubId, Hubs},
@@ -44,7 +48,7 @@ pub struct Trip {
     pub back: bool,
     /// The moment its travel is counted up to.
     pub counted: When,
-    pub cargo: Vec<Stack>,
+    pub cargo: Vec<Owned>,
 }
 
 /// How a trip stands once its time is counted.
@@ -58,7 +62,7 @@ pub enum Road {
 }
 
 impl Trip {
-    pub fn begun(to: (i32, i32), way: Vec<Leg>, cargo: Vec<Stack>, when: When) -> Trip {
+    pub fn begun(to: (i32, i32), way: Vec<Leg>, cargo: Vec<Owned>, when: When) -> Trip {
         Trip { to, way, done: 0, spare: Duration::ZERO, back: false, counted: when, cargo }
     }
 
@@ -168,36 +172,107 @@ pub fn destinations(chart: &Chart, hubs: &Hubs, hearth: (i32, i32)) -> Vec<((i32
     others.into_iter().filter_map(|hub| Some((hub, chart.way(from, chart.beside(hub)?)?))).filter(|(_, way)| !way.is_empty()).collect()
 }
 
-/// What wagons have left at each hub, by the tile the hub was known by
-/// when they came.
+/// So many of a material and the player whose they are: the one who
+/// loaded them on a wagon or left them in a storehouse. None where they
+/// are no one's, loaded before a load said whose it was: anyone's to
+/// take.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Owned {
+    pub who: Option<Identity>,
+    pub stack: Stack,
+}
+
+/// Puts `owned` with what `held` has of its kind for its player.
+pub fn put(held: &mut Vec<Owned>, owned: Owned) {
+    match held.iter_mut().find(|kept| kept.who == owned.who && kept.stack.kind == owned.stack.kind) {
+        Some(kept) => kept.stack.count += owned.stack.count,
+        None => held.push(owned),
+    }
+}
+
+/// How many `held` has of each kind, whoever's they are, in the order
+/// it has them.
+pub fn totals(held: &[Owned]) -> Vec<Stack> {
+    let mut all: Vec<Stack> = Vec::new();
+    for owned in held {
+        match all.iter_mut().find(|stack| stack.kind == owned.stack.kind) {
+            Some(stack) => stack.count += owned.stack.count,
+            None => all.push(owned.stack),
+        }
+    }
+    all
+}
+
+/// What each hub's storehouse holds, by the tile the hub is known by:
+/// what players left there and what wagons brought, each stack its
+/// player's own. It is the hub's whether or not its storehouse stands,
+/// so what a wagon brings before one is raised waits for it.
 #[derive(Resource, Default)]
 pub struct Depots {
-    held: HashMap<(i32, i32), Vec<Stack>>,
+    held: HashMap<(i32, i32), Vec<Owned>>,
     changed: Vec<(i32, i32)>,
 }
 
 impl Depots {
-    /// What the depot at `hub` holds.
-    pub fn on(&self, hub: (i32, i32)) -> &[Stack] {
+    /// Everything the depot at `hub` holds, whoever's.
+    pub fn on(&self, hub: (i32, i32)) -> &[Owned] {
         self.held.get(&hub).map_or(&[], Vec::as_slice)
     }
 
+    /// What `who` may take from the depot at `hub`: its own, and what is
+    /// no one's, a stack to a kind.
+    pub fn of(&self, hub: (i32, i32), who: Identity) -> Vec<Stack> {
+        let open: Vec<Owned> = self.on(hub).iter().copied().filter(|owned| owned.who.is_none_or(|whose| whose == who)).collect();
+        totals(&open)
+    }
+
     /// Lays a depot kept from an earlier run.
-    pub fn recall(&mut self, hub: (i32, i32), held: Vec<Stack>) {
+    pub fn recall(&mut self, hub: (i32, i32), held: Vec<Owned>) {
         self.held.insert(hub, held);
     }
 
-    /// Leaves `cargo` in the depot at `hub`, each stack on the one of its
-    /// kind.
-    pub fn leave(&mut self, hub: (i32, i32), cargo: &[Stack]) {
+    /// Leaves `brought` in the depot at `hub`, each stack with what its
+    /// player has there of its kind.
+    pub fn leave(&mut self, hub: (i32, i32), brought: &[Owned]) {
         let held = self.held.entry(hub).or_default();
-        for stack in cargo {
-            match held.iter_mut().find(|kept| kept.kind == stack.kind) {
-                Some(kept) => kept.count += stack.count,
-                None => held.push(*stack),
-            }
+        for owned in brought {
+            put(held, *owned);
         }
         self.changed.push(hub);
+    }
+
+    /// Takes as many as `asked` of its kind out of what `who` may take
+    /// from the depot at `hub` ([`Depots::of`]), its own before what is
+    /// no one's and no more than there is: what was taken, none where
+    /// there is none.
+    pub fn take(&mut self, hub: (i32, i32), who: Identity, asked: Stack) -> Option<Stack> {
+        let held = self.held.get_mut(&hub)?;
+        let mut left = asked.count;
+        for whose in [Some(who), None] {
+            if let Some(owned) = held.iter_mut().find(|owned| owned.who == whose && owned.stack.kind == asked.kind) {
+                let count = left.min(owned.stack.count);
+                owned.stack.count -= count;
+                left -= count;
+            }
+        }
+        held.retain(|owned| owned.stack.count > 0);
+        if left == asked.count {
+            return None;
+        }
+        self.changed.push(hub);
+        Some(Stack { kind: asked.kind, count: asked.count - left })
+    }
+
+    /// The hub known by `from` was taken in by the hub known by `into`:
+    /// all its depot held is in that hub's, each stack still its
+    /// player's. Returns what moved.
+    pub fn join(&mut self, from: (i32, i32), into: (i32, i32)) -> Vec<Owned> {
+        let moved = self.held.remove(&from).unwrap_or_default();
+        if !moved.is_empty() {
+            self.leave(into, &moved);
+            self.changed.push(from);
+        }
+        moved
     }
 
     /// The hubs whose depot changed since the last call.
@@ -315,7 +390,7 @@ mod tests {
         let (home, recorded) = (centre(-1, 0), centre(1, 0));
         let moved = (recorded.0 + 3, recorded.1 - 5);
         let way = open.way(home, recorded).unwrap();
-        let softwood = Stack { kind: Stackable::Material(Material::Softwood), count: 2 };
+        let softwood = Owned { who: None, stack: Stack { kind: Stackable::Material(Material::Softwood), count: 2 } };
 
         let mut trip = Trip::begun(recorded, way.clone(), vec![softwood], When(0));
         let (mut day, bound) = (STEP * 10_000, way.len() - 1);
@@ -352,14 +427,36 @@ mod tests {
         assert_eq!(hub_at(&hubs, centre(-3, 1)), None);
     }
 
-    /// What wagons leave at a hub lies there together.
+    /// A storehouse holds each player's own: what it left and what wagons
+    /// brought of its loading together, to take out no more than it has
+    /// and nothing of another's. What is no one's is anyone's, taken
+    /// after its own. A hub taken in brings each player's with it.
     #[test]
-    fn a_depot_holds_what_wagons_leave() {
+    fn a_depot_holds_each_players_own() {
         let of = |material, count| Stack { kind: Stackable::Material(material), count };
+        let (ann, ben) = (Identity::Key([1; 16]), Identity::Key([2; 16]));
+        let mine = |who, stack| Owned { who: Some(who), stack };
         let mut depots = Depots::default();
-        depots.leave((3, 4), &[of(Material::Softwood, 2), of(Material::Hide, 1)]);
-        depots.leave((3, 4), &[of(Material::Softwood, 5)]);
-        assert_eq!(depots.on((3, 4)), &[of(Material::Softwood, 7), of(Material::Hide, 1)]);
-        assert_eq!((depots.take_changed().len(), depots.on((0, 0)).len()), (2, 0));
+        depots.leave((3, 4), &[mine(ann, of(Material::Softwood, 2)), mine(ben, of(Material::Softwood, 9)), Owned { who: None, stack: of(Material::Hide, 1) }]);
+        depots.leave((3, 4), &[mine(ann, of(Material::Softwood, 5))]);
+        assert_eq!((depots.of((3, 4), ann), depots.of((3, 4), ben)), (vec![of(Material::Softwood, 7), of(Material::Hide, 1)], vec![of(Material::Softwood, 9), of(Material::Hide, 1)]));
+        assert_eq!(totals(depots.on((3, 4))), vec![of(Material::Softwood, 16), of(Material::Hide, 1)]);
+        assert_eq!(depots.take((3, 4), ann, of(Material::Softwood, 4)), Some(of(Material::Softwood, 4)));
+        assert_eq!(depots.take((3, 4), ann, of(Material::Softwood, 40)), Some(of(Material::Softwood, 3)), "no more than it has");
+        assert_eq!((depots.take((3, 4), ann, of(Material::Softwood, 1)), depots.of((3, 4), ben)), (None, vec![of(Material::Softwood, 9), of(Material::Hide, 1)]));
+        depots.leave((3, 4), &[Owned { who: None, stack: of(Material::Softwood, 2) }]);
+        assert_eq!(depots.take((3, 4), ben, of(Material::Softwood, 10)), Some(of(Material::Softwood, 10)), "its own first, then what is no one's");
+        assert_eq!((depots.of((3, 4), ann), depots.of((3, 4), ben)), (vec![of(Material::Hide, 1), of(Material::Softwood, 1)], vec![of(Material::Hide, 1), of(Material::Softwood, 1)]));
+        depots.leave((3, 4), &[mine(ben, of(Material::Softwood, 9))]);
+        assert_eq!(depots.take((3, 4), ann, of(Material::Softwood, 5)), Some(of(Material::Softwood, 1)), "and never another's");
+        depots.leave((0, 0), &[mine(ben, of(Material::Softwood, 1))]);
+        depots.take_changed();
+        assert_eq!(depots.join((3, 4), (0, 0)).len(), 2);
+        assert_eq!(depots.take((0, 0), ann, of(Material::Hide, 1)), Some(of(Material::Hide, 1)));
+        assert_eq!((depots.of((0, 0), ben), depots.on((3, 4)).len()), (vec![of(Material::Softwood, 10)], 0));
+        let mut changed = depots.take_changed();
+        changed.sort();
+        changed.dedup();
+        assert_eq!((changed, depots.join((9, 9), (0, 0)).len()), (vec![(0, 0), (3, 4)], 0));
     }
 }

@@ -12,13 +12,17 @@
 //! what it holds and opens the bag, where what a stack's detail would
 //! drop goes on the wagon while the player stands there. The
 //! server finds the settler or the wagon and decides what is handed
-//! over, what a plan does and where the wagon may go. Unbuilt: a
-//! plan is told in words, and nothing marks its tiles on the ground.
+//! over, what a plan does and where the wagon may go. A storehouse is
+//! looked at the same way: what the player has in it shows in the loot
+//! window, where a cell's key takes it out, and while the player stands
+//! there what the bag would drop is left in it. Unbuilt: a
+//! plan is told in words, and nothing marks its tiles on the ground;
+//! and a storehouse shows no more kinds than the loot window has cells.
 
 use bevy::prelude::*;
 use common::building::{Needs, Planned, Task, Wagon, Wants};
 use common_bevy::{
-    components::{position::Position, Actor},
+    components::{equipment::Lot, position::Position, Actor},
     message::{Do, Event, Try},
     resources::map::Map,
 };
@@ -27,7 +31,7 @@ use qrz::Convert;
 use crate::systems::{
     character_panel::{CharacterPanel, CharacterPanelState, PanelTab},
     focus::{NumpadFocus, Panel},
-    gathering::{KEYCODE_CLOSE, KEYCODE_TAKE_ALL},
+    gathering::{LootWindow, ENTRY_KEYS, KEYCODE_CLOSE, KEYCODE_TAKE_ALL},
 };
 
 /// The key that hails the settler nearest the player, and lets it be.
@@ -64,16 +68,81 @@ pub struct Hailed(pub Option<(Wants, Position)>);
 #[derive(Resource, Default)]
 pub struct Carted(pub Option<Wagon>);
 
-/// A wagon looked at: what it holds, and where the player stood to look.
+/// What a player looks at to move materials between it and the bag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kept {
+    Wagon,
+    Store,
+}
+
+impl Kept {
+    /// What putting a stack of the bag's on it is called.
+    pub fn takes(self) -> &'static str {
+        match self {
+            Kept::Wagon => "load on the wagon",
+            Kept::Store => "leave in the storehouse",
+        }
+    }
+
+    /// Why a piece stays in the bag.
+    pub fn refuses(self) -> &'static str {
+        match self {
+            Kept::Wagon => "A wagon carries materials",
+            Kept::Store => "A storehouse keeps materials",
+        }
+    }
+}
+
+/// A wagon or a storehouse looked at: which, what the wagon holds or the
+/// player has in the storehouse, and where the player stood to look.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Looked {
-    load: Vec<common::Stack>,
+    what: Kept,
+    held: Vec<common::Stack>,
     stood: Position,
 }
 
-/// The wagon the player looks at; None while it looks at none.
+/// The wagon or storehouse the player looks at; None while it looks at
+/// neither.
 #[derive(Resource, Default)]
 pub struct Loading(pub Option<Looked>);
+
+impl Loading {
+    pub fn what(&self) -> Option<Kept> {
+        self.0.as_ref().map(|looked| looked.what)
+    }
+
+    /// Takes what the server said `what` near the player holds, the
+    /// player standing at `stood`: looked at from then, or no longer where
+    /// it says none is in reach. Whether it is looked at anew.
+    fn hear(&mut self, what: Kept, held: Option<Vec<common::Stack>>, stood: Position) -> bool {
+        let same = self.what() == Some(what);
+        match held {
+            Some(held) => {
+                // Where it stood as it first looked: moving materials does not move it
+                let stood = self.0.as_ref().filter(|_| same).map_or(stood, |looked| looked.stood);
+                self.0 = Some(Looked { what, held, stood });
+                !same
+            }
+            None => {
+                if same {
+                    self.0 = None;
+                }
+                false
+            }
+        }
+    }
+}
+
+/// What a storehouse the player has `held` in shows in the loot window:
+/// a stack to a cell, as many as it has cells.
+fn cells(held: &[common::Stack]) -> [Option<Lot>; common::TILE_SLOTS as usize] {
+    let mut cells = [None; common::TILE_SLOTS as usize];
+    for (cell, stack) in cells.iter_mut().zip(held) {
+        *cell = Some(Lot::Stack(*stack));
+    }
+    cells
+}
 
 /// The keys that ask the hailed settler what growing its hub, and what
 /// shrinking it, would do.
@@ -235,15 +304,21 @@ pub fn request(
     }
 }
 
-/// Looks at the wagon beside the player on T, where no settler is hailed,
-/// and leaves it on T again, when the player moves or when a settler
-/// answers, shutting the bag it opened. While a wagon is looked at the
-/// bag loads it (`bag_panel`, `drop_panel`).
+/// Looks at the wagon or the storehouse beside the player on T, where no
+/// settler is hailed, and leaves it on T again, when the player moves or
+/// when a settler answers, shutting the bag a wagon opened and the window
+/// a storehouse did. While one is looked at the bag's stacks go to it
+/// (`bag_panel`, `drop_panel`), and a storehouse's window takes from it:
+/// a cell's key what lies in it, as far as the bag has room, and the
+/// take-all key every cell.
+#[allow(clippy::too_many_arguments)]
 pub fn load(
     mut keys: crate::systems::help::Keys,
     menu: Res<crate::plugins::shell::menu::GameMenu>,
+    focus: Res<NumpadFocus>,
     hailed: Res<Hailed>,
     mut loading: ResMut<Loading>,
+    mut window: ResMut<LootWindow>,
     player: Query<Entity, (With<Actor>, With<Position>)>,
     (predicted, map, mut settling): (crate::systems::movement::Predicted, Res<Map>, ResMut<crate::systems::input::Settling>),
     mut bag: (ResMut<CharacterPanelState>, Query<&mut Visibility, With<CharacterPanel>>),
@@ -258,67 +333,98 @@ pub fn load(
     if menu.open {
         return;
     }
-    let look = keys.pressed(KEYCODE_HAIL, "Look at the wagon beside you to load it from your bag, or leave it");
+    let look = keys.pressed(KEYCODE_HAIL, "Look at the wagon or the storehouse beside you, to move materials between it and your bag, or leave it");
     let Some(looked) = &loading.0 else {
         if look && hailed.0.is_none() {
             settling.begin();
             writer.write(Try { event: Event::Load { ent, give: None } });
+            writer.write(Try { event: Event::Store { ent, give: None, take: None } });
         }
         return;
     };
-    if look || walked_off(&map, &looked.stood, &position) || hailed.0.is_some() {
-        let why = match (look, hailed.0.is_some()) {
+    let mut close = false;
+    if looked.what == Kept::Store && focus.has(Panel::Loot) {
+        let taken = |stack: &common::Stack| Try { event: Event::Store { ent, give: None, take: Some(*stack) } };
+        for (stack, key) in looked.held.iter().zip(ENTRY_KEYS).take(common::TILE_SLOTS as usize) {
+            if keys.take(key, "Take what is yours in this cell out of the storehouse") {
+                writer.write(taken(stack));
+            }
+        }
+        if keys.take(KEYCODE_TAKE_ALL, "Take everything that is yours out of the storehouse") {
+            writer.write_batch(looked.held.iter().take(common::TILE_SLOTS as usize).map(taken));
+        }
+        close = keys.take(KEYCODE_CLOSE, "Leave the storehouse");
+    }
+    if look || close || walked_off(&map, &looked.stood, &position) || hailed.0.is_some() {
+        let why = match (look || close, hailed.0.is_some()) {
             (true, _) => "asked to".to_owned(),
             (_, true) => "a settler answers".to_owned(),
             _ => format!("the player {:.2} from where it stood", gone(&map, &looked.stood, &position)),
         };
-        info!("wagon: left, {why}");
-        loading.0 = None;
-        if let Ok(mut visibility) = bag.1.single_mut() {
-            crate::systems::character_panel::close(&mut bag.0, &mut visibility);
-            *visibility = Visibility::Hidden;
+        info!("{:?}: left, {why}", looked.what);
+        match looked.what {
+            Kept::Store => window.cells = None,
+            Kept::Wagon => {
+                if let Ok(mut visibility) = bag.1.single_mut() {
+                    crate::systems::character_panel::close(&mut bag.0, &mut visibility);
+                    *visibility = Visibility::Hidden;
+                }
+            }
         }
+        loading.0 = None;
     }
 }
 
-/// Keeps what the wagon looked at holds as the server says it, and opens
-/// the bag on one looked at anew, to load it from.
+/// Keeps what the wagon or storehouse looked at holds as the server says
+/// it. A wagon looked at anew opens the bag, to load it from; a
+/// storehouse shows what the player has in it in the loot window. A pile
+/// opened while a storehouse is looked at has the window instead, and
+/// the storehouse is left.
 pub fn do_loaded(
     mut reader: MessageReader<Do>,
     mut loading: ResMut<Loading>,
+    mut window: ResMut<LootWindow>,
     player: Query<&Position, With<Actor>>,
     predicted: crate::systems::movement::Predicted,
     mut state: ResMut<CharacterPanelState>,
     mut panel: Query<&mut Visibility, With<CharacterPanel>>,
 ) {
     for message in reader.read() {
-        let Do { event: Event::Loaded { ent, load } } = message else { continue };
-        let Ok(position) = player.get(*ent) else { continue };
-        // Where it stood as it first looked: loading does not move it
-        let stood = loading.0.as_ref().map_or_else(|| predicted.position().unwrap_or(*position), |looked| looked.stood);
-        let was = loading.0.is_some();
-        if !was {
-            info!("wagon: {}", if load.is_some() { "one stands in reach" } else { "none stands in reach" });
-        }
-        if was || load.is_some() {
-            loading.0 = load.clone().map(|load| Looked { load, stood });
-        }
-        if !was && loading.0.is_some() {
-            (state.visible, state.tab) = (true, PanelTab::Bag);
-            if let Ok(mut visibility) = panel.single_mut() {
-                *visibility = Visibility::Visible;
+        let (ent, what, held) = match message {
+            Do { event: Event::Loaded { ent, load } } => (ent, Kept::Wagon, load),
+            Do { event: Event::Stored { ent, held } } => (ent, Kept::Store, held),
+            Do { event: Event::Loot { ent, .. } } if player.contains(*ent) && loading.what() == Some(Kept::Store) => {
+                loading.0 = None;
+                continue;
             }
+            _ => continue,
+        };
+        let Ok(position) = player.get(*ent) else { continue };
+        let was = loading.what();
+        let anew = loading.hear(what, held.clone(), predicted.position().unwrap_or(*position));
+        if anew {
+            info!("{what:?}: one stands in reach");
+        }
+        match what {
+            Kept::Wagon if anew => {
+                (state.visible, state.tab) = (true, PanelTab::Bag);
+                if let Ok(mut visibility) = panel.single_mut() {
+                    *visibility = Visibility::Visible;
+                }
+            }
+            Kept::Store if was == Some(Kept::Store) || anew => window.cells = loading.0.as_ref().map(|looked| cells(&looked.held)),
+            _ => {}
         }
     }
 }
 
-/// The wagon panel's root, spawned with its first open and shown while
-/// open.
+/// The root of the panel that says what is looked at, a wagon or a
+/// storehouse, spawned with its first open and shown while open.
 #[derive(Component)]
 pub struct WagonRows;
 
-/// Shows the wagon's panel while one is looked at and lays its lines out
-/// again whenever what it holds changes.
+/// Shows the panel while a wagon or a storehouse is looked at and lays
+/// its lines out again whenever what that holds changes.
 pub fn update_wagon(mut commands: Commands, loading: Res<Loading>, mut rows: Query<(Entity, &mut Node), With<WagonRows>>) {
     if !loading.is_changed() {
         return;
@@ -350,11 +456,22 @@ pub fn update_wagon(mut commands: Commands, loading: Res<Loading>, mut rows: Que
     let Some(looked) = &loading.0 else { return };
     let line = |text: String| (Text::new(text), TextFont { font_size: FontSize::Px(14.0), ..default() }, TextColor(Color::srgb(0.85, 0.85, 0.85)));
     commands.entity(root).with_children(|list| {
-        list.spawn(line("Wagon".to_owned()));
-        list.spawn(line(holds(&looked.load)));
-        list.spawn(line("Load it from your bag while you stand here".to_owned()));
-        list.spawn(line("Its settler sends it, by a map".to_owned()));
-        crate::systems::keycap::hint_row(list, None, &[crate::systems::keycap::Hint::key(KEYCODE_HAIL, "leave it")]);
+        use crate::systems::keycap::{hint_row, Hint};
+        match looked.what {
+            Kept::Wagon => {
+                list.spawn(line("Wagon".to_owned()));
+                list.spawn(line(holds(&looked.held)));
+                list.spawn(line("Load it from your bag while you stand here".to_owned()));
+                list.spawn(line("Its settler sends it, by a map".to_owned()));
+                hint_row(list, None, &[Hint::key(KEYCODE_HAIL, "leave it")]);
+            }
+            Kept::Store => {
+                list.spawn(line("Storehouse".to_owned()));
+                list.spawn(line(if looked.held.is_empty() { "There is nothing here for you".to_owned() } else { "Yours, and what is no one's".to_owned() }));
+                list.spawn(line("What you load on a wagon is left for you where it goes".to_owned()));
+                hint_row(list, None, &[Hint::key(crate::systems::character_panel::KEYCODE_CHARACTER_PANEL, "your bag, to leave things here"), Hint::key(KEYCODE_HAIL, "leave it")]);
+            }
+        }
     });
 }
 

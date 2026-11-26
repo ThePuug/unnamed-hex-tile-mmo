@@ -1,8 +1,9 @@
 //! The drop panel: how many of a bag stack to drop, typed on the numpad's
 //! digits or scrolled with + and -, in the bag tab's detail of the stack.
 //! It starts at the whole stack and never goes past what the bag holds.
-//! While the player looks at a wagon (`settlers::Loading`) what would be
-//! dropped is loaded on the wagon.
+//! While the player looks at a wagon or a storehouse
+//! (`settlers::Loading`) what would be dropped is loaded on the one or
+//! left in the other.
 
 use std::time::Duration;
 
@@ -198,15 +199,25 @@ pub fn handle_keys(
         choice.0 = None;
         return;
     }
-    let wagon = loading.0.is_some();
-    let takes = if wagon { "Load the count chosen on the wagon" } else { "Drop the count chosen" };
+    use crate::systems::settlers::Kept;
+    let takes = match loading.what() {
+        Some(Kept::Wagon) => "Load the count chosen on the wagon",
+        Some(Kept::Store) => "Leave the count chosen in the storehouse",
+        None => "Drop the count chosen",
+    };
     match chosen.work(&mut keys, time.elapsed(), most, focus.has(Panel::Drop) && !console.visible, takes) {
         Chose::Still => choice.0 = Some(chosen),
         Chose::Cancelled => choice.0 = None,
         Chose::Taken(count) => {
             let stack = common::Stack { kind: chosen.kind, count };
             if count > 0 {
-                writer.write(Try { event: if wagon { Event::Load { ent, give: Some(stack) } } else { Event::Drop { ent, lot: stack.into() } } });
+                writer.write(Try {
+                    event: match loading.what() {
+                        Some(Kept::Wagon) => Event::Load { ent, give: Some(stack) },
+                        Some(Kept::Store) => Event::Store { ent, give: Some(stack), take: None },
+                        None => Event::Drop { ent, lot: stack.into() },
+                    },
+                });
             }
             choice.0 = None;
         }

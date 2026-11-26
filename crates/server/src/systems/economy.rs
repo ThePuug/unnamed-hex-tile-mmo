@@ -11,8 +11,8 @@ use common_bevy::{archetype::EnemyArchetype, components::equipment::{Item, Lot}}
 /// What holds an item: a player's character, a pile in one slot of a
 /// tile, the camp round the hearth on a tile, whose settler builds with
 /// it and whose wagon carries it, the depot of the hub known by a tile,
-/// where wagons leave it, or the world, which holds whatever is not in
-/// play.
+/// where wagons and players leave it in its storehouse, or the world,
+/// which holds whatever is not in play.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Holder {
     World,
@@ -55,6 +55,10 @@ pub enum Cause {
     Draw,
     /// A wagon carried it to a hub, or left by the map it used up.
     Haul,
+    /// A player left it in a storehouse.
+    Store,
+    /// A player took its own out of a storehouse.
+    Withdraw,
 }
 
 impl Cause {
@@ -74,6 +78,8 @@ impl Cause {
             Cause::Give => 9,
             Cause::Draw => 10,
             Cause::Haul => 11,
+            Cause::Store => 12,
+            Cause::Withdraw => 13,
         }
     }
 }

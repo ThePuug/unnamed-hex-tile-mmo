@@ -80,7 +80,7 @@ pub fn kept(camp: &Camp, dormant: &[Value]) -> String {
         clearing: camp.clearing.clone(),
         stock: camp.stock.iter().copied().map(stored::stack).chain(dormant.iter().cloned()).collect(),
         worked: camp.worked,
-        load: camp.load.iter().copied().map(stored::stack).collect(),
+        load: camp.load.iter().copied().map(stored::owned).collect(),
         trip: camp.trip.as_ref().map(|trip| Road {
             to: trip.to,
             way: trip.way.clone(),
@@ -88,7 +88,7 @@ pub fn kept(camp: &Camp, dormant: &[Value]) -> String {
             spare: trip.spare.as_millis() as u64,
             back: trip.back,
             counted: trip.counted,
-            cargo: trip.cargo.iter().copied().map(stored::stack).collect(),
+            cargo: trip.cargo.iter().copied().map(stored::owned).collect(),
         }),
     };
     serde_json::to_string(&state).expect("a camp serializes")
@@ -103,10 +103,10 @@ pub fn recalled(key: (i32, i32), state: Value) -> Option<(Camp, Vec<Value>)> {
     let (stock, mut dormant) = stored::stacks(state.stock);
     // What the wagon holds that this build cannot play stays kept, with
     // the camp's own
-    let (load, unloaded) = stored::stacks(state.load);
+    let (load, unloaded) = stored::owneds(state.load);
     dormant.extend(unloaded);
     let trip = state.trip.map(|road| {
-        let (cargo, lost) = stored::stacks(road.cargo);
+        let (cargo, lost) = stored::owneds(road.cargo);
         dormant.extend(lost);
         Trip { to: road.to, way: road.way, done: road.done, spare: Duration::from_millis(road.spare), back: road.back, counted: road.counted, cargo }
     });
@@ -146,9 +146,10 @@ mod tests {
         camp.clearing = vec![(5, 2), (6, 2)];
         camp.worked = When(1_500_000);
         camp.stock = vec![Stack { kind: Stackable::Material(Material::Hide), count: 4 }];
-        camp.load = vec![Stack { kind: Stackable::Material(Material::Fibre), count: 2 }];
+        let whose = |who, material, count| crate::systems::haul::Owned { who, stack: Stack { kind: Stackable::Material(material), count } };
+        camp.load = vec![whose(Some(common::network::Identity::Key([3; 16])), Material::Fibre, 2), whose(None, Material::Fibre, 1)];
         let leg = Leg { from: (1, 2), by: (3, 4), to: (4, 4), steps: 5 };
-        let mut trip = Trip::begun((90, -40), vec![leg, leg], vec![Stack { kind: Stackable::Material(Material::Softwood), count: 9 }], When(1_600_000));
+        let mut trip = Trip::begun((90, -40), vec![leg, leg], vec![whose(Some(common::network::Identity::Key([5; 16])), Material::Softwood, 9)], When(1_600_000));
         (trip.done, trip.spare, trip.back) = (1, Duration::from_millis(700), true);
         camp.trip = Some(trip);
         let coin = serde_json::json!({"coin": 1, "count": 2});

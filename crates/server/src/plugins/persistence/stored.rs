@@ -4,7 +4,7 @@
 //! anything: it comes back apart, as it was kept, for its holder to keep
 //! on, so nothing kept is lost to a build that cannot play it.
 
-use common::{Material, Stack, Stackable};
+use common::{network::Identity, Material, Stack, Stackable};
 use common_bevy::{
     components::{
         equipment::{Item, Lot, Piece},
@@ -13,6 +13,8 @@ use common_bevy::{
     message::AbilityType,
 };
 use serde_json::{json, Value};
+
+use crate::systems::haul::Owned;
 
 /// An item, and its own number where it is one of a kind.
 pub fn item(item: Item) -> Value {
@@ -33,6 +35,17 @@ pub fn kind(kind: Stackable) -> Value {
 pub fn stack(stack: Stack) -> Value {
     let mut kept = kind(stack.kind);
     kept["count"] = json!(stack.count);
+    kept
+}
+
+/// A stack and the player whose it is, by its provider's name for it;
+/// a stack alone where it is no one's.
+pub fn owned(owned: Owned) -> Value {
+    let mut kept = stack(owned.stack);
+    if let Some(who) = owned.who {
+        kept["provider"] = json!(who.provider());
+        kept["name"] = json!(who.name());
+    }
     kept
 }
 
@@ -89,6 +102,20 @@ pub fn lots(kept: Vec<Value>) -> (Vec<Lot>, Vec<Value>) {
     sorted(kept, |value| read_stack(value).map(Lot::Stack).or_else(|| read_item(value).map(Lot::Piece)))
 }
 
+/// The stacks `kept` holds that this build has, each with the player
+/// whose it is where it names one this build knows, and the rest as
+/// kept. A stack naming a player of a provider this build does not know
+/// is of the rest: read as no one's, it would be lost to its player.
+pub fn owneds(kept: Vec<Value>) -> (Vec<Owned>, Vec<Value>) {
+    sorted(kept, |value| {
+        let who = match (value.get("provider"), value.get("name")) {
+            (None, None) => None,
+            (provider, name) => Some(Identity::named(provider?.as_str()?, name?.as_str()?)?),
+        };
+        Some(Owned { who, stack: read_stack(value)? })
+    })
+}
+
 /// The stacks `kept` holds that this build has, and the rest as kept.
 pub fn stacks(kept: Vec<Value>) -> (Vec<Stack>, Vec<Value>) {
     sorted(kept, read_stack)
@@ -141,6 +168,9 @@ mod tests {
         assert_eq!(items(vec![item(one)]).0, vec![one], "one of a kind keeps its number");
         assert_eq!(stacks(vec![stack(wood), odd.clone()]), (vec![wood], vec![odd.clone()]));
         assert_eq!(lots(vec![lot(one.into()), odd.clone(), lot(wood.into())]), (vec![one.into(), wood.into()], vec![odd]), "a pile holds either");
+        let (mine, no_ones) = (Owned { who: Some(Identity::Key([4; 16])), stack: wood }, Owned { who: None, stack: wood });
+        let strangers = json!({"material": Material::Hide.id(), "count": 1, "provider": "no such provider", "name": "ab"});
+        assert_eq!(owneds(vec![owned(mine), stack(wood), strangers.clone()]), (vec![mine, no_ones], vec![strangers]), "a stack keeps whose it is");
     }
 
     #[test]

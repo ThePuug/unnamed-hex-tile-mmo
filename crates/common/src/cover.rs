@@ -37,7 +37,7 @@ pub enum Content {
     Blockade(Material),
     /// What a hub's settlers raise (`crate::building::Fixture`), each
     /// standing in the tile's centre: a tent, a wagon and a hitching
-    /// post there alone, stakes holding every slot. A hitching post has
+    /// post there alone, stakes and a storehouse holding every slot. A hitching post has
     /// its settler's horse tied at it, or stands empty while the horse
     /// is away with the wagon.
     Tent,
@@ -45,6 +45,7 @@ pub enum Content {
     Wagon,
     Post,
     PostEmpty,
+    Storehouse,
     /// A fixture begun and not yet raised, in the tile's centre, at a
     /// stage of `crate::building::STAGES` from 1: in no one's way, and
     /// the tile no one else's to build on.
@@ -58,7 +59,7 @@ impl Content {
         match self {
             Content::Empty | Content::Spanned | Content::Filled => 0,
             Content::Brush | Content::Reed | Content::Boulder | Content::PineStump | Content::DeciduousStump | Content::Tent | Content::Wagon | Content::Post | Content::PostEmpty | Content::Raising(..) => 1,
-            Content::Hearth(_) | Content::Blockade(_) | Content::Stakes => TILE_SLOTS,
+            Content::Hearth(_) | Content::Blockade(_) | Content::Stakes | Content::Storehouse => TILE_SLOTS,
             Content::Pile(_) | Content::Bundle => 1,
             Content::Pine | Content::Deciduous => 2,
         }
@@ -111,10 +112,12 @@ impl Content {
             Content::Wagon => 98,
             Content::Post => 99,
             Content::PostEmpty => 100,
+            Content::Storehouse => 101,
             Content::Raising(crate::building::Fixture::Tent, stage) => RAISING_BITS | stage as u64 & 3,
             Content::Raising(crate::building::Fixture::Stakes, stage) => RAISING_BITS + 4 | stage as u64 & 3,
             Content::Raising(crate::building::Fixture::Wagon, stage) => RAISING_BITS + 8 | stage as u64 & 3,
             Content::Raising(crate::building::Fixture::Post, stage) => RAISING_BITS + 12 | stage as u64 & 3,
+            Content::Raising(crate::building::Fixture::Storehouse, stage) => RAISING_BITS + 16 | stage as u64 & 3,
         }
     }
 
@@ -149,10 +152,12 @@ impl Content {
             98 => Content::Wagon,
             99 => Content::Post,
             100 => Content::PostEmpty,
+            101 => Content::Storehouse,
             105..=107 => Content::Raising(crate::building::Fixture::Tent, (bits & 3) as u8),
             109..=111 => Content::Raising(crate::building::Fixture::Stakes, (bits & 3) as u8),
             113..=115 => Content::Raising(crate::building::Fixture::Wagon, (bits & 3) as u8),
             117..=119 => Content::Raising(crate::building::Fixture::Post, (bits & 3) as u8),
+            121..=123 => Content::Raising(crate::building::Fixture::Storehouse, (bits & 3) as u8),
             _ => Content::Empty,
         }
     }

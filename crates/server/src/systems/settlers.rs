@@ -2,15 +2,17 @@
 //! player builds, a while after it is built, riding its horse, and
 //! makes the ground what its hub's plan says (`common_bevy::sites`): it
 //! takes down what a plan gave up, raises what each build site wants,
-//! a hitching post, where it ties the horse, tents and a wagon, and
-//! then stakes along the hub's wall. It raises only what it holds the
+//! a hitching post, where it ties the horse, tents, a wagon and a
+//! storehouse, and then stakes along the hub's wall. It raises only what it holds the
 //! materials for, handed it by a player who hails it, and what it
 //! raises is the hub's and no player's to take down. What it takes down
 //! it builds with again.
 //!
 //! Asked to by a player who hails it, it says what growing its hub a
 //! tier, or shrinking it to what its people hold, would do, and carries
-//! that out ([`try_plan`]).
+//! that out ([`try_plan`]). One plan no player asks for: a hub laid
+//! before every hub had an essential is planned it as its camp is next
+//! tended (`Hubs::completed`).
 //!
 //! A camp is what is kept: when its settler comes, what stands of its
 //! line, the materials it holds and when its settler last worked, each
@@ -31,6 +33,10 @@
 //! near where the trip has come to, the settler driving the wagon
 //! along the leg the trip is on, and no one hails it at its hearth
 //! until it is home, where the wagon stands again.
+//!
+//! A hub's storehouse is where players leave materials and take their
+//! own out ([`try_store`]), and where a wagon come to the hub leaves
+//! each player's share of its load (`haul::Depots`).
 //!
 //! A thing is raised by stages: begun when the settler reaches its tile
 //! and its materials are spent, carried a stage further each time the
@@ -81,7 +87,7 @@ use crate::systems::{
     characters::Character,
     charts::{held, Charts},
     economy::{Cause, Holder, Moved, Thing},
-    haul::{destinations, hub_at, Depots, Road, Trip},
+    haul::{destinations, hub_at, put, totals, Depots, Owned, Road, Trip},
 };
 
 /// How fast settlers come and work: what a hub's growth may one day
@@ -91,18 +97,19 @@ pub struct Settling {
     /// How long after a hearth is built its settler comes.
     pub arrives: Duration,
     /// How long a settler works on a tent, on one tile of stakes, on a
-    /// wagon and on a post, from begun to raised: long enough that a camp
-    /// is earned. A hearth takes a post's work, and taking a thing down
+    /// wagon, on a post and on a storehouse, from begun to raised: long
+    /// enough that a camp is earned. A hearth takes a post's work, and taking a thing down
     /// a stake's.
     pub tent: Duration,
     pub stakes: Duration,
     pub wagon: Duration,
     pub post: Duration,
+    pub store: Duration,
 }
 
 impl Default for Settling {
     fn default() -> Self {
-        Self { arrives: Duration::from_secs(120), tent: Duration::from_secs(600), stakes: Duration::from_secs(45), wagon: Duration::from_secs(1200), post: Duration::from_secs(180) }
+        Self { arrives: Duration::from_secs(120), tent: Duration::from_secs(600), stakes: Duration::from_secs(45), wagon: Duration::from_secs(1200), post: Duration::from_secs(180), store: Duration::from_secs(900) }
     }
 }
 
@@ -113,6 +120,7 @@ impl Settling {
             Step::Stakes | Step::Clear => self.stakes,
             Step::Wagon => self.wagon,
             Step::Post | Step::Hearth => self.post,
+            Step::Store => self.store,
         }
     }
 
@@ -127,7 +135,7 @@ impl Settling {
 
     /// Everything `times` as fast.
     pub fn hastened(self, times: u32) -> Self {
-        Self { arrives: self.arrives / times, tent: self.tent / times, stakes: self.stakes / times, wagon: self.wagon / times, post: self.post / times }
+        Self { arrives: self.arrives / times, tent: self.tent / times, stakes: self.stakes / times, wagon: self.wagon / times, post: self.post / times, store: self.store / times }
     }
 }
 
@@ -173,6 +181,8 @@ pub enum Step {
     /// Stakes on a tile of the hub's wall.
     Stakes,
     Wagon,
+    /// The storehouse.
+    Store,
     /// The hub's hearth, laid where a plan put it.
     Hearth,
     /// Taking down what a plan gave up.
@@ -180,6 +190,8 @@ pub enum Step {
 }
 
 impl Step {
+    const ALL: [Step; 7] = [Step::Post, Step::Home, Step::Stakes, Step::Wagon, Step::Store, Step::Hearth, Step::Clear];
+
     /// The step that raises what `what` asks of its site.
     fn of(what: Standing) -> Step {
         match what {
@@ -187,6 +199,7 @@ impl Step {
             Standing::Post => Step::Post,
             Standing::Wagon => Step::Wagon,
             Standing::Home => Step::Home,
+            Standing::Store => Step::Store,
         }
     }
 
@@ -196,6 +209,7 @@ impl Step {
             Step::Stakes => Task::Raise(Fixture::Stakes),
             Step::Wagon => Task::Raise(Fixture::Wagon),
             Step::Post => Task::Raise(Fixture::Post),
+            Step::Store => Task::Raise(Fixture::Storehouse),
             Step::Hearth => Task::Hearth,
             Step::Clear => Task::Clear,
         }
@@ -220,11 +234,12 @@ impl Step {
             Step::Post => 5,
             Step::Hearth => 6,
             Step::Clear => 7,
+            Step::Store => 8,
         }
     }
 
     pub fn kept_as(id: u32) -> Option<Step> {
-        [Step::Post, Step::Home, Step::Stakes, Step::Wagon, Step::Hearth, Step::Clear].into_iter().find(|step| step.id() == id).or((id == 2).then_some(Step::Home))
+        Step::ALL.into_iter().find(|step| step.id() == id).or((id == 2).then_some(Step::Home))
     }
 }
 
@@ -251,8 +266,9 @@ pub struct Camp {
     /// The moment its settler's work is counted up to: all the daytime
     /// since is work it has yet to be given.
     pub worked: When,
-    /// What is loaded on its wagon, to go with it when it is next sent.
-    pub load: Vec<Stack>,
+    /// What is loaded on its wagon, to go with it when it is next sent,
+    /// each stack its loader's.
+    pub load: Vec<Owned>,
     /// Its wagon's trip, while the wagon and its settler are on the road.
     pub trip: Option<Trip>,
 }
@@ -325,6 +341,15 @@ impl Camps {
         std::mem::take(&mut self.changed)
     }
 
+    /// The camp known by `hearth` is to take down what stands on `tiles`,
+    /// which a plan gave up.
+    fn give_up(&mut self, hearth: (i32, i32), tiles: impl Iterator<Item = (i32, i32)>) {
+        let Some(camp) = self.change(hearth) else { return };
+        camp.clearing.extend(tiles);
+        camp.clearing.sort();
+        camp.clearing.dedup();
+    }
+
     fn change(&mut self, hearth: (i32, i32)) -> Option<&mut Camp> {
         let camp = self.camps.get_mut(&hearth)?;
         self.changed.push(hearth);
@@ -388,6 +413,7 @@ fn stands(site: &Site, what: Standing, tile: (i32, i32)) -> bool {
         Standing::Post => building::fixture(cover) == Some(Fixture::Post) || building::emptied_post(cover),
         Standing::Wagon => building::fixture(cover) == Some(Fixture::Wagon),
         Standing::Home => building::fixture(cover) == Some(Fixture::Tent),
+        Standing::Store => building::fixture(cover) == Some(Fixture::Storehouse),
     }
 }
 
@@ -500,7 +526,7 @@ fn begin(site: &mut Site, camps: &mut Camps, settling: &Settling, hearth: (i32, 
 /// What a spell of work on what a camp has begun came to.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Worked {
-    /// Nothing: someone stands where the stakes would fill the tile.
+    /// Nothing: someone stands on the tile what is raised would fill.
     Waiting,
     /// It stands a stage further.
     Further,
@@ -535,7 +561,8 @@ fn advance(site: &mut Site, camps: &mut Camps, settling: &Settling, hearth: (i32
         site.ground.set(&mut site.writer, at.0, at.1, next);
         return Worked::Further;
     }
-    if step == Step::Stakes && occupied(&site.nntree, at, z) {
+    // What fills its tile waits for whoever stands there to step off
+    if matches!(step.task(), Task::Raise(fixture) if fixture.fills()) && occupied(&site.nntree, at, z) {
         return Worked::Waiting;
     }
     let camp = camps.change(hearth).expect("its camp stands");
@@ -633,8 +660,8 @@ fn park(site: &mut Site, camps: &mut Camps, hearth: (i32, i32)) {
 /// Carries the wagon of the camp round `hearth` on through the daytime
 /// since its trip was last counted. Its last leg out ends at the hub
 /// standing now where its map recorded one (`haul::hub_at`): come to it,
-/// the wagon leaves what it carried in that hub's depot and turns for
-/// home, and with no hub there it turns with its load. Come home, it
+/// the wagon leaves what it carried in that hub's storehouse, each
+/// loader's share its own there, and turns for home, and with no hub there it turns with its load. Come home, it
 /// stands in its camp again once the ground there is held, what it
 /// brought back is the camp's to load again, and its trip is over.
 fn haul(site: &mut Site, camps: &mut Camps, charts: &Charts, depots: &mut Depots, hearth: (i32, i32), when: When) {
@@ -665,11 +692,8 @@ fn haul(site: &mut Site, camps: &mut Camps, charts: &Charts, depots: &mut Depots
         if site.ground.lies(hearth.0, hearth.1).is_some() {
             info!("settlers: the wagon of {hearth:?} is home");
             let camp = camps.change(hearth).expect("its camp stands");
-            for stack in camp.trip.take().map_or(Vec::new(), |trip| trip.cargo) {
-                match camp.load.iter_mut().find(|held| held.kind == stack.kind) {
-                    Some(held) => held.count += stack.count,
-                    None => camp.load.push(stack),
-                }
+            for owned in camp.trip.take().map_or(Vec::new(), |trip| trip.cargo) {
+                put(&mut camp.load, owned);
             }
             park(site, camps, hearth);
         }
@@ -683,8 +707,8 @@ fn haul(site: &mut Site, camps: &mut Camps, charts: &Charts, depots: &mut Depots
     let cargo = std::mem::take(&mut trip.cargo);
     trip.turned();
     depots.leave((q, r), &cargo);
-    for stack in cargo {
-        site.moved.write(Moved::stack(stack, Holder::Camp(hearth.0, hearth.1), Holder::Depot(q, r), Cause::Haul));
+    for owned in cargo {
+        site.moved.write(Moved::stack(owned.stack, Holder::Camp(hearth.0, hearth.1), Holder::Depot(q, r), Cause::Haul));
     }
     camps.changed.push(hearth);
     info!("settlers: the wagon of {hearth:?} left its load at the hub of {:?} and turned for home", (q, r));
@@ -729,6 +753,10 @@ pub fn tend_camps(
     let nearest = |hearth: (i32, i32)| players.iter().map(|loc| distance((loc.q, loc.r), hearth)).min();
     let hearths: Vec<(i32, i32)> = camps.camps.keys().copied().collect();
     for hearth in hearths {
+        if let Some(plan) = site.hubs.of_hearth(hearth).and_then(|id| site.hubs.completed(id)) {
+            site.hubs.carry(&plan);
+            camps.give_up(hearth, plan.pulled.iter().copied());
+        }
         haul(&mut site, camps, &charts, &mut depots, hearth, when);
         let camp = &camps.camps[&hearth];
         // On the road its settler is where the trip has come to, and
@@ -1115,9 +1143,59 @@ pub fn try_hail(
         site.writer.write(Do { event: Event::Wants { ent, wants: Some(said) } });
         let wagon = carted.then(|| {
             let reached = held(worn).and_then(|map| charts.map(map)).map_or(Vec::new(), |chart| destinations(chart, &site.hubs, hearth));
-            common::building::Wagon { load: camps.camps[&hearth].load.clone(), hubs: reached.into_iter().map(|(hub, _)| hub).collect() }
+            common::building::Wagon { load: totals(&camps.camps[&hearth].load), hubs: reached.into_iter().map(|(hub, _)| hub).collect() }
         });
         site.writer.write(Do { event: Event::Wagon { ent, wagon } });
+    }
+}
+
+/// What a player at `loc` looks at: the nearest within reach of every
+/// wagon standing at home and every storehouse raised, a wagon where one
+/// of each is as near, and the camp it is of.
+fn looked(site: &Site, camps: &Camps, loc: &Loc) -> Option<(Standing, (i32, i32))> {
+    let beside = |key: (i32, i32), what: Standing| Some((qrz::hex_distance((loc.q, loc.r), raised(site, key, what)?), what != Standing::Wagon, key, what));
+    let wagons = camps.camps.iter().filter(|(_, camp)| camp.trip.is_none()).filter_map(|(&key, _)| beside(key, Standing::Wagon));
+    let stores = camps.camps.keys().filter_map(|&key| beside(key, Standing::Store));
+    wagons.chain(stores).filter(|&(far, ..)| far <= HAIL).min_by_key(|&(far, store, key, _)| (far, store, key)).map(|(.., key, what)| (what, key))
+}
+
+/// Answers each player that looks at a storehouse: the nearest raised
+/// within reach says what the player has in it. Asked to, the player
+/// leaves in it so many of one material from its bag, or takes out so
+/// many of its own, as far as its bag has room and weight for. What it
+/// holds is each player's own, by night as by day and wherever its hub's
+/// wagon is.
+pub fn try_store(mut reader: MessageReader<Try>, mut site: Site, camps: Res<Camps>, mut depots: ResMut<Depots>, mut players: Query<(&Loc, &mut Inventory, &Equipment, &Character)>) {
+    for message in reader.read() {
+        let Try { event: Event::Store { ent, give, take } } = message else { continue };
+        let (ent, give, take) = (*ent, *give, *take);
+        let Ok((loc, mut bag, worn, &Character(who))) = players.get_mut(ent) else { continue };
+        let hub = looked(&site, &camps, loc).filter(|(what, _)| *what == Standing::Store).and_then(|(_, key)| site.hubs.of_hearth(key));
+        let Some(common_bevy::hubs::HubId(q, r)) = hub else {
+            site.writer.write(Do { event: Event::Stored { ent, held: None } });
+            continue;
+        };
+        let mut changed = false;
+        // No more than the bag holds of it
+        let count = give.map_or(0, |stack| stack.count.min(bag.count(stack.kind)));
+        if let Some(asked) = give.filter(|_| count > 0) {
+            let stack = bag.remove(asked.kind, count);
+            depots.leave((q, r), &[Owned { who: Some(who), stack }]);
+            site.moved.write(Moved::stack(stack, Holder::Character(who), Holder::Depot(q, r), Cause::Store));
+            info!("settlers: {ent} left {} {:?} in the storehouse of {:?}", stack.count, stack.kind, (q, r));
+            changed = true;
+        }
+        let fits = take.map(|asked| Stack { kind: asked.kind, count: asked.count.min(bag.room_for(worn, asked.kind)) });
+        if let Some(stack) = fits.and_then(|asked| depots.take((q, r), who, asked)) {
+            bag.add(stack);
+            site.moved.write(Moved::stack(stack, Holder::Depot(q, r), Holder::Character(who), Cause::Withdraw));
+            info!("settlers: {ent} took {} {:?} out of the storehouse of {:?}", stack.count, stack.kind, (q, r));
+            changed = true;
+        }
+        if changed {
+            site.writer.write(Do { event: Event::Inventory { ent, bag: bag.clone() } });
+        }
+        site.writer.write(Do { event: Event::Stored { ent, held: Some(depots.of((q, r), who)) } });
     }
 }
 
@@ -1131,9 +1209,7 @@ pub fn try_load(mut reader: MessageReader<Try>, mut site: Site, mut camps: ResMu
         let Try { event: Event::Load { ent, give } } = message else { continue };
         let (ent, give) = (*ent, *give);
         let Ok((loc, mut bag, &Character(who))) = players.get_mut(ent) else { continue };
-        let beside = |key: (i32, i32)| Some((qrz::hex_distance((loc.q, loc.r), raised(&site, key, Standing::Wagon)?), key));
-        let near = camps.camps.iter().filter(|(_, camp)| camp.trip.is_none()).filter_map(|(&key, _)| beside(key)).filter(|&(far, _)| far <= HAIL).min();
-        let Some((_, key)) = near else {
+        let Some((_, key)) = looked(&site, &camps, loc).filter(|(what, _)| *what == Standing::Wagon) else {
             site.writer.write(Do { event: Event::Loaded { ent, load: None } });
             continue;
         };
@@ -1142,15 +1218,12 @@ pub fn try_load(mut reader: MessageReader<Try>, mut site: Site, mut camps: ResMu
         if let Some(asked) = give.filter(|_| count > 0) {
             let stack = bag.remove(asked.kind, count);
             let camp = camps.change(key).expect("its camp stands");
-            match camp.load.iter_mut().find(|held| held.kind == stack.kind) {
-                Some(held) => held.count += stack.count,
-                None => camp.load.push(stack),
-            }
+            put(&mut camp.load, Owned { who: Some(who), stack });
             site.moved.write(Moved::stack(stack, Holder::Character(who), Holder::Camp(key.0, key.1), Cause::Give));
             info!("settlers: {ent} loaded {} {:?} on the wagon of {key:?}", stack.count, stack.kind);
             site.writer.write(Do { event: Event::Inventory { ent, bag: bag.clone() } });
         }
-        site.writer.write(Do { event: Event::Loaded { ent, load: Some(camps.camps[&key].load.clone()) } });
+        site.writer.write(Do { event: Event::Loaded { ent, load: Some(totals(&camps.camps[&key].load)) } });
     }
 }
 
@@ -1206,7 +1279,8 @@ fn lacking(site: &Site, camps: &Camps, key: (i32, i32), plan: &Plan) -> Needs {
 /// lacks; a grow the camp lacks materials for takes what the player's
 /// bag holds of those instead, and is asked for again. Carried out, the
 /// hubs are as the plan leaves them from then, a hub taken in
-/// gives its camp all it held, each hub parted off has a camp and a
+/// gives its camp all it held and its storehouse's all to the hub's, each
+/// stack still its player's, each hub parted off has a camp and a
 /// settler of its own, and the settlers make the ground so in their own
 /// time. No plan is made by night, with the wagon on the road, or while
 /// the settler, or that of a hub the plan takes in, has a thing begun.
@@ -1215,6 +1289,7 @@ pub fn try_plan(
     mut reader: MessageReader<Try>,
     mut site: Site,
     mut camps: ResMut<Camps>,
+    mut depots: ResMut<Depots>,
     time: Res<Time>,
     runtime: Res<combat::RunTime>,
     settlers: Query<(&Settler, &Loc)>,
@@ -1257,19 +1332,24 @@ pub fn try_plan(
             let ours = camps.change(key).expect("its camp stands");
             ours.credit = ours.credit.plus(camp.credit);
             ours.clearing.extend(camp.clearing);
-            for (stack, loaded) in camp.stock.into_iter().map(|stack| (stack, false)).chain(camp.load.into_iter().map(|stack| (stack, true))) {
-                let held = if loaded { &mut ours.load } else { &mut ours.stock };
-                match held.iter_mut().find(|held| held.kind == stack.kind) {
+            for stack in camp.stock {
+                match ours.stock.iter_mut().find(|held| held.kind == stack.kind) {
                     Some(held) => held.count += stack.count,
-                    None => held.push(stack),
+                    None => ours.stock.push(stack),
                 }
                 site.moved.write(Moved::stack(stack, Holder::Camp(taken.0, taken.1), Holder::Camp(key.0, key.1), Cause::Give));
             }
+            for owned in camp.load {
+                put(&mut ours.load, owned);
+                site.moved.write(Moved::stack(owned.stack, Holder::Camp(taken.0, taken.1), Holder::Camp(key.0, key.1), Cause::Give));
+            }
         }
-        let ours = camps.change(key).expect("its camp stands");
-        ours.clearing.extend(plan.pulled.iter().copied().chain(plan.gone.iter().map(|at| at.at)));
-        ours.clearing.sort();
-        ours.clearing.dedup();
+        for taken in plan.taken.iter().map(|id| (id.0, id.1)) {
+            for owned in depots.join(taken, (plan.hub.0, plan.hub.1)) {
+                site.moved.write(Moved::stack(owned.stack, Holder::Depot(taken.0, taken.1), Holder::Depot(plan.hub.0, plan.hub.1), Cause::Give));
+            }
+        }
+        camps.give_up(key, plan.pulled.iter().copied().chain(plan.gone.iter().map(|at| at.at)));
         for parted in plan.parted() {
             camps.found((parted.0, parted.1), when);
         }
@@ -1367,7 +1447,7 @@ mod tests {
     /// second kind of tent there was is at a home.
     #[test]
     fn a_step_is_kept_by_its_number() {
-        assert!([Step::Post, Step::Home, Step::Stakes, Step::Wagon, Step::Hearth, Step::Clear].into_iter().all(|step| Step::kept_as(step.id()) == Some(step)));
+        assert!(Step::ALL.into_iter().all(|step| Step::kept_as(step.id()) == Some(step)));
         assert_eq!((Step::kept_as(2), Step::kept_as(99)), (Some(Step::Home), None));
         assert!(Standing::ALL.into_iter().all(|what| !Step::of(what).needs().is_none()), "whatever stands on a site takes materials");
         assert!(Step::Clear.needs().is_none());

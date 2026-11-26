@@ -106,6 +106,9 @@ pub enum Fixture {
     Wagon,
     /// A hitching post, where a settler's horse is tied.
     Post,
+    /// Where a hub keeps what players leave in it and wagons bring them,
+    /// each player's its own to take. It fills its tile.
+    Storehouse,
 }
 
 /// What a blank map is drawn on, and a copy of one: so much fibre.
@@ -234,7 +237,7 @@ pub struct Wagon {
 }
 
 impl Fixture {
-    pub const ALL: [Fixture; 4] = [Fixture::Tent, Fixture::Stakes, Fixture::Wagon, Fixture::Post];
+    pub const ALL: [Fixture; 5] = [Fixture::Tent, Fixture::Stakes, Fixture::Wagon, Fixture::Post, Fixture::Storehouse];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -242,6 +245,7 @@ impl Fixture {
             Fixture::Stakes => "Stakes",
             Fixture::Wagon => "Wagon",
             Fixture::Post => "Hitching post",
+            Fixture::Storehouse => "Storehouse",
         }
     }
 
@@ -252,18 +256,26 @@ impl Fixture {
             Fixture::Stakes => "stakes",
             Fixture::Wagon => "wagon",
             Fixture::Post => "hitching-post",
+            Fixture::Storehouse => "storehouse",
         }
     }
 
     /// What raising it takes: hide over wood for a tent, a great deal of
-    /// wood for a wagon, and for stakes the wood of one tile of a wall.
+    /// wood for a wagon, wood on a stone footing for a storehouse, and
+    /// for stakes the wood of one tile of a wall.
     pub fn needs(self) -> Needs {
         match self {
             Fixture::Tent => Needs { hide: 4, wood: 4, stone: 0 },
             Fixture::Stakes => Needs { hide: 0, wood: 4, stone: 0 },
             Fixture::Wagon => Needs { hide: 0, wood: 24, stone: 0 },
             Fixture::Post => Needs { hide: 0, wood: 6, stone: 0 },
+            Fixture::Storehouse => Needs { hide: 0, wood: 16, stone: 4 },
         }
+    }
+
+    /// Whether it fills its tile once raised, so a walker goes round it.
+    pub fn fills(self) -> bool {
+        matches!(self, Fixture::Stakes | Fixture::Storehouse)
     }
 
     fn content(self) -> Content {
@@ -272,6 +284,7 @@ impl Fixture {
             Fixture::Stakes => Content::Stakes,
             Fixture::Wagon => Content::Wagon,
             Fixture::Post => Content::Post,
+            Fixture::Storehouse => Content::Storehouse,
         }
     }
 
@@ -279,7 +292,7 @@ impl Fixture {
     /// brush cleared, or None where the tile cannot take it: any slot of
     /// it holds more than brush. A tent and a wagon want the whole tile
     /// clear though they hold its centre alone, so each stands in the
-    /// open.
+    /// open. One begun fills no slot until it is raised.
     pub fn begun(self, cover: Cover) -> Option<Cover> {
         let free = |k: usize| matches!(cover.content(k), Content::Empty | Content::Brush);
         let cleared = || (0..TILE_SLOTS as usize).fold(cover, |cover, k| cover.with_content(k, Content::Empty));
@@ -326,7 +339,7 @@ pub fn advanced(cover: Cover) -> Option<Cover> {
     let (fixture, stage) = rising(cover)?;
     Some(match (fixture, stage < STAGES) {
         (_, true) => cover.with_content(SLOT, Content::Raising(fixture, stage + 1)),
-        (Fixture::Stakes, false) => stood(cover, Content::Stakes),
+        (_, false) if fixture.fills() => stood(cover, fixture.content()),
         (_, false) => cover.with_content(SLOT, fixture.content()),
     })
 }
@@ -486,7 +499,7 @@ mod tests {
             assert_eq!(fixture.begun(Cover::NONE.with_boulder(4)), None);
             assert!(Fixture::ALL.iter().all(|other| other.begun(up).is_none()));
         }
-        assert_eq!(raised(Fixture::Stakes).fullness(), TILE_SLOTS);
+        assert!(Fixture::ALL.into_iter().all(|fixture| (raised(fixture).fullness() == TILE_SLOTS) == fixture.fills()));
         assert!(raised(Fixture::Tent).fullness() == 1 && used(raised(Fixture::Tent), SLOT));
     }
 

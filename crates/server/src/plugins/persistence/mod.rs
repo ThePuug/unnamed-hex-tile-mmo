@@ -369,7 +369,7 @@ impl Keeper {
         let hubs_left_at: Vec<(i32, i32)> = self.changed_depots.drain().collect();
         batch.depots = hubs_left_at
             .iter()
-            .map(|&hub| (hub, serde_json::to_string(&depots.on(hub).iter().copied().map(stored::stack).collect::<Vec<_>>()).expect("stacks serialize")))
+            .map(|&hub| (hub, serde_json::to_string(&depots.on(hub).iter().copied().map(stored::owned).collect::<Vec<_>>()).expect("stacks serialize")))
             .collect();
 
         let mut changed = std::mem::take(&mut self.changed);
@@ -516,7 +516,7 @@ fn keep(
     }
     info!("store: recalled {leaves} charted chunks");
     for (hub, held) in block_on(keeper.store.depots()).unwrap_or_else(|e| panic!("the store's depots cannot be read: {e}")) {
-        let (stacks, unplayable) = stored::stacks(held);
+        let (stacks, unplayable) = stored::owneds(held);
         if !unplayable.is_empty() {
             error!("store: the depot at {hub:?} holds {} things this build cannot play; the next wagon there writes over them", unplayable.len());
         }

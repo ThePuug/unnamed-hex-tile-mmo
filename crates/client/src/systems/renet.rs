@@ -66,6 +66,8 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::Wagon { .. } => "Wagon",
         Event::Load { .. } => "Load",
         Event::Loaded { .. } => "Loaded",
+        Event::Store { .. } => "Store",
+        Event::Stored { .. } => "Stored",
         Event::Send { .. } => "Send",
         Event::Rollback { .. } => "Rollback",
         Event::Wants { .. } => "Wants",
@@ -228,6 +230,7 @@ pub fn write_do(
                 | Event::Planned { .. }
                 | Event::Wagon { .. }
                 | Event::Loaded { .. }
+                | Event::Stored { .. }
                 | Event::Charted { .. }
                 | Event::Sheltered { .. }
                 | Event::Activity { .. }
@@ -359,6 +362,7 @@ pub fn send_try(
             | Event::Plan { .. }
             | Event::Draw { .. }
             | Event::Load { .. }
+            | Event::Store { .. }
             | Event::Send { .. }
             | Event::Wear { .. }
             | Event::Mount { .. }
