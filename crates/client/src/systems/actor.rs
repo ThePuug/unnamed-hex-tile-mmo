@@ -170,6 +170,9 @@ pub fn do_spawn(
                         // New position and visual interpolation components
                         Position::at_tile(qrz),
                         VisualPosition::at(spawn_world),
+                        // Simulated from the first frame, so one met
+                        // standing falls onto the ground it is drawn on
+                        RemoteMotion { moving: false, back: false, residual_us: 0 },
                     ))
                     .insert((
                         attrs_val,

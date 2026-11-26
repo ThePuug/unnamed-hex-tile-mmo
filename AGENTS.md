@@ -265,7 +265,9 @@ the wire, the server's `input::apply` runs exactly that dt and answers
 `input::do_confirm` pops the back by `seq` and adopts them.
 `movement::predict_local_player` replays the queue from `Position` and `Turn`
 into `VisualPosition` and `Heading`. Remote entities run the same physics in
-`movement::simulate_remote` from their last `MovementIntent`.
+`movement::simulate_remote` from their last `MovementIntent`, and from
+the moment they are met, standing, until the first: the physics is what
+puts an actor on the ground.
 
 **Keys.** Every key a player presses is read through
 `client::systems::help::Keys`, which takes what the key does: held Right

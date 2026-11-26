@@ -215,14 +215,14 @@ pub fn advance_interpolation(
 pub fn apply_intent(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
-    mut query: Query<(&mut Position, &mut Heading, &mut AirTime, Option<&mut RemoteMotion>, Option<&mut Status>)>,
+    mut query: Query<(&mut Position, &mut Heading, &mut AirTime, &mut RemoteMotion, Option<&mut Status>)>,
     buffers: Res<InputQueues>,
 ) {
     for message in reader.read() {
         let Do { event: Event::MovementIntent { ent, position, heading, moving, back, airtime, burdened } } = message else { continue };
         let ent = *ent;
         if buffers.get(&ent).is_some() { continue; }
-        let Ok((mut position0, mut heading0, mut airtime0, motion, status)) = query.get_mut(ent) else { continue; };
+        let Ok((mut position0, mut heading0, mut airtime0, mut motion, status)) = query.get_mut(ent) else { continue; };
         match status {
             Some(mut status) => { if status.burden != *burdened { status.burden = *burdened; } }
             None if *burdened => { commands.entity(ent).insert(Status { burden: true, ..default() }); }
@@ -231,10 +231,7 @@ pub fn apply_intent(
         *position0 = *position;
         if *heading0 != *heading { *heading0 = *heading; }
         airtime0.state = *airtime;
-        match motion {
-            Some(mut motion) => { motion.moving = *moving; motion.back = *back; }
-            None => { commands.entity(ent).insert(RemoteMotion { moving: *moving, back: *back, residual_us: 0 }); }
-        }
+        (motion.moving, motion.back) = (*moving, *back);
     }
 }
 
@@ -307,7 +304,7 @@ pub fn end_displace(time: Res<Time>, mut commands: Commands, query: Query<(Entit
 /// `Teleport` jumps ([`do_teleport`]).
 pub fn do_loc(
     mut reader: MessageReader<Do>,
-    mut query: Query<(&mut Loc, &mut Position, &mut VisualPosition, Option<&Displacing>, Option<&RemoteMotion>)>,
+    mut query: Query<(&mut Loc, &mut Position, &mut VisualPosition, Option<&Displacing>)>,
     buffers: Res<InputQueues>,
     map: Res<Map>,
     origin: Res<RenderOrigin>,
@@ -317,7 +314,7 @@ pub fn do_loc(
     for message in reader.read() {
         let Do { event: Event::Incremental { ent, component: Component::Loc(loc) } } = message else { continue };
         let (ent, loc) = (*ent, *loc);
-        let Ok((mut loc0, mut position, mut visual, displacing, motion)) = query.get_mut(ent) else { continue; };
+        let Ok((mut loc0, mut position, mut visual, displacing)) = query.get_mut(ent) else { continue; };
         // The tile's centre as drawn.
         let centre: Vec3 = origin.render_tile(&map, *loc);
         let is_local = buffers.get(&ent).is_some();
@@ -326,7 +323,7 @@ pub fn do_loc(
             if loc.flat_distance(&displacing.destination) == 0 {
                 *position = Position::at_tile(*loc);
             }
-        } else if motion.is_some() {
+        } else if !is_local {
             let mut rebased = *position;
             rebased.rebase(*loc, &map);
             if rebased.offset.xz().length() > drift_limit {
@@ -335,9 +332,6 @@ pub fn do_loc(
             } else {
                 *position = rebased;
             }
-        } else if !is_local {
-            *position = Position::at_tile(*loc);
-            visual.interpolate_toward(centre, LOC_SETTLE_SECS);
         }
 
         *loc0 = loc;
