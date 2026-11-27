@@ -120,6 +120,11 @@ pub struct Visit {
     /// How far off the sun is, in the year's own distance: its width
     /// goes by one over it.
     pub far: f32,
+    /// How far off the visitor is, in the same distance.
+    pub off: f32,
+    /// Which way the visitor lies from the world in their plane, in
+    /// turns: the world sees it from every side as this goes round.
+    pub bearing: f32,
 }
 
 /// The sky `t` seasons after the visitor takes the world, from the season
@@ -152,6 +157,8 @@ pub fn visit(t: f32) -> Visit {
         near: LOOP / to_visitor.length(),
         sun: world.to_angle() / TAU,
         far: world.length(),
+        off: to_visitor.length(),
+        bearing: to_visitor.to_angle() / TAU,
     }
 }
 

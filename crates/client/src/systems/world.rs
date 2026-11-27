@@ -117,10 +117,11 @@ fn sky_radius_wu() -> f32 {
     common_bevy::summary::reach_wu() * 1.4
 }
 
-/// The sun's and the moon's discs in the sky, unlit and unfogged, held
-/// `disc_distance_wu` from the camera in their light's direction.
+/// The sun's, the moon's and the visitor's discs in the sky, unlit and
+/// unfogged, held `disc_distance_wu` from the camera in their body's
+/// direction.
 #[derive(Component)]
-pub enum Disc { Sun, Moon }
+pub enum Disc { Sun, Moon, Visitor }
 
 /// A disc's material: the lit hemisphere of a sphere facing the camera,
 /// lit from `sun` in the disc's own frame, +z toward the camera, so the
@@ -141,6 +142,66 @@ pub struct DiscMaterial {
     #[sampler(2)]
     pub face: Option<Handle<Image>>,
 }
+
+/// The visitor's disc: the lit part of a wrecked, ringed world and its
+/// rings, lit from `sun` and its rings square to `pole`, both in the
+/// disc's own frame, +z toward the camera. Its `face` is a map wrapped
+/// round the sphere and its `rings` a strip wrapped once round it, so
+/// both repeat. Shaded by `shaders/giant.wesl`.
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+pub struct GiantMaterial {
+    #[uniform(0)]
+    pub sun: Vec4,
+    #[uniform(0)]
+    pub pole: Vec4,
+    #[uniform(0)]
+    pub color: LinearRgba,
+    /// The sun behind the disc: where its middle stands on it and, in
+    /// `z`, its radius, in the visitor's radii; in `w`, whether it is
+    /// behind at all. The rings' dust is alight about it.
+    #[uniform(0)]
+    pub behind: Vec4,
+    #[texture(1)]
+    #[sampler(2)]
+    pub face: Handle<Image>,
+    #[texture(3)]
+    #[sampler(4)]
+    pub rings: Handle<Image>,
+    /// The face's heights, place for place.
+    #[texture(5)]
+    #[sampler(6)]
+    pub relief: Handle<Image>,
+}
+
+impl Material for GiantMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/giant.wesl".into()
+    }
+
+    /// Drawn after the sun's disc wherever its rings reach it. What blends
+    /// is ordered by how far along the view its middle lies, which for two
+    /// discs as far off as each other turns with the camera: this is more
+    /// than that can differ by across the rings, and less than brings it
+    /// in front of the clouds.
+    fn depth_bias(&self) -> f32 {
+        0.2 * disc_distance_wu()
+    }
+
+    /// The unlit part is the sky, dark across the visitor.
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Blend
+    }
+}
+
+/// The visitor's disc reaches this many of its radii out, to hold its
+/// rings: the same number as `REACH` in `shaders/giant.wesl`.
+const GIANT_REACH: f32 = 2.7;
+/// How far the visitor's pole leans from square to the plane the world
+/// goes round it in: its rings open by as much, to either side, as the
+/// world goes round.
+const GIANT_LEAN: f32 = 0.45;
+/// How bright the visitor's lit face stands, as the moon's does.
+const GIANT_BRIGHTNESS: f32 = 1.5;
 
 /// No body across a disc: one of no size, far off it.
 const NO_BITE: Vec4 = Vec4::new(10., 0., 0., 0.);
@@ -189,16 +250,18 @@ const SUNSET: f32 = common_bevy::systems::NIGHT.0 as f32 / 24.;
 const MOONRISE: f32 = 21. / 24.;
 const MOONSET: f32 = 7. / 24.;
 const MOON_HIGH: f32 = MOONRISE + (1. + MOONSET - MOONRISE) * (NOON - SUNRISE) / (SUNSET - SUNRISE);
-/// The visitor, the dark thing the world goes once round in a leap season.
-/// It gives no light and takes none: across it the sky is a deep violet
-/// by day and by night, the stars and the sun behind it hidden, and the
-/// light bent round it a pale rim. Where it stands from the sun, how
+/// The visitor, the ringed giant the world goes once round in a leap
+/// season. Its lit part and its rings are a disc of their own
+/// (`GiantMaterial`); across the whole of it the sky is a deep violet by
+/// day and by night, the stars and the sun behind it hidden, so its
+/// unlit part is dark. It lights
+/// nothing. Where it stands from the sun, how
 /// near it is, and what the sun does meanwhile are
 /// `common_bevy::sky::visit`'s; it is drawn on the sun's own track that
 /// far behind the sun, so it meets the sun where the sun is.
 ///
 /// How wide it is at its nearest, all the while it holds the world.
-const VISITOR_WIDE: f32 = 10_f32.to_radians();
+const VISITOR_WIDE: f32 = 7_f32.to_radians();
 /// The share of the sky's light left with the sun wholly covered, and of
 /// the sun's halo, which stands about the dark disc.
 const ECLIPSE_SKY: f32 = 0.02;
@@ -459,6 +522,7 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut disc_materials: ResMut<Assets<DiscMaterial>>,
+    mut giant_materials: ResMut<Assets<GiantMaterial>>,
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
     assets: Res<AssetServer>,
 ) {
@@ -517,6 +581,19 @@ pub fn setup(
             settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
         })
         .load("textures/moon.dds");
+    // A map that goes round its body meets itself at its edge.
+    let wrapped = |path: &'static str| {
+        assets
+            .load_builder()
+            .with_settings(|settings: &mut ImageLoaderSettings| {
+                settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+                    address_mode_u: bevy::image::ImageAddressMode::Repeat,
+                    address_mode_v: bevy::image::ImageAddressMode::Repeat,
+                    ..ImageSamplerDescriptor::linear()
+                });
+            })
+            .load(path)
+    };
     let disc = |diameter: f32| Circle::new(disc_distance_wu() * (diameter / 2.).tan()).mesh().resolution(48);
     for (which, diameter, face) in [(Disc::Sun, SUN_ANGULAR_DIAMETER, None), (Disc::Moon, MOON_ANGULAR_DIAMETER, Some(moon_face))] {
         commands.spawn((
@@ -527,6 +604,21 @@ pub fn setup(
             NotShadowReceiver,
             which));
     }
+    commands.spawn((
+        Mesh3d(meshes.add(Circle::new(disc_distance_wu() * (VISITOR_WIDE / 2.).tan() * GIANT_REACH).mesh().resolution(48))),
+        MeshMaterial3d(giant_materials.add(GiantMaterial {
+            sun: Vec4::Z,
+            pole: Vec4::Y,
+            color: LinearRgba::WHITE,
+            behind: Vec4::ZERO,
+            face: wrapped("textures/visitor.dds"),
+            rings: wrapped("textures/visitor-rings.dds"),
+            relief: wrapped("textures/visitor-relief.dds"),
+        })),
+        Transform::default(),
+        NotShadowCaster,
+        NotShadowReceiver,
+        Disc::Visitor));
 }
 
 // ─────────────────────────────────────────────────────────
@@ -641,8 +733,9 @@ pub fn update(
     mut a_light: ResMut<GlobalAmbientLight>,
     mut clear: ResMut<ClearColor>,
     mut q_camera: Query<(&GlobalTransform, &mut DistanceFog)>,
-    mut q_discs: Query<(&Disc, &mut Transform, &MeshMaterial3d<DiscMaterial>), (Without<Sun>, Without<Moon>)>,
+    mut q_discs: Query<(&Disc, &mut Transform, Option<&MeshMaterial3d<DiscMaterial>>, Option<&MeshMaterial3d<GiantMaterial>>), (Without<Sun>, Without<Moon>)>,
     mut disc_materials: ResMut<Assets<DiscMaterial>>,
+    mut giant_materials: ResMut<Assets<GiantMaterial>>,
     q_sky: Query<&MeshMaterial3d<SkyMaterial>, With<SkyDome>>,
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
     (weather, q_clouds, mut cloud_materials): (Res<SkyWeather>, Query<&MeshMaterial3d<CloudMaterial>, With<CloudDeck>>, ResMut<Assets<CloudMaterial>>),
@@ -678,7 +771,8 @@ pub fn update(
     let (v_behind, v_wide) = visit.map_or((0., 0.), |(t, visit)| {
         (visit.east, VISITOR_WIDE * visit.near * smoothstep(-1., -0.9, t) * (1. - smoothstep(1.9, 2., t)))
     });
-    let v_toward = toward(orbit(dtd - v_behind, SUNRISE, NOON, SUNSET), s_tilt);
+    let toward_of = |day: f32| toward(orbit(day, SUNRISE, NOON, SUNSET), s_tilt);
+    let v_toward = toward_of(dtd - v_behind);
     let open = 1. - covered(s_toward.angle_between(v_toward), s_near * SUN_ANGULAR_DIAMETER / 2., v_wide / 2.);
 
     let s_direct = direct(s_elevation);
@@ -817,11 +911,36 @@ pub fn update(
     // Each disc faces the camera from its body's direction, in its light's
     // colour; the ground occludes it as it sets.
     let camera = camera.translation();
-    for (disc, mut transform, material) in &mut q_discs {
-        let toward = match disc { Disc::Sun => s_toward, Disc::Moon => m_toward };
+    for (disc, mut transform, material, giant) in &mut q_discs {
+        let toward = match disc { Disc::Sun => s_toward, Disc::Moon => m_toward, Disc::Visitor => v_toward };
         transform.translation = camera + toward * disc_distance_wu();
         transform.rotation = Quat::from_rotation_arc(Vec3::Z, -toward);
-        let Some(mut material) = disc_materials.get_mut(&material.0) else { continue };
+        if let Disc::Visitor = disc {
+            // Nearer than the sun's disc, so it is drawn across it.
+            transform.translation = camera + toward * disc_distance_wu() * 0.98;
+            transform.scale = Vec3::splat((v_wide / VISITOR_WIDE).max(1e-4));
+            let (Some((_, visit)), Some(mut material)) = (visit, giant.and_then(|giant| giant_materials.get_mut(&giant.0))) else { continue };
+            // The sun as the visitor has it, from where each stands.
+            let light = (s_toward * visit.far - v_toward * visit.off).try_normalize().unwrap_or(Vec3::Y);
+            // Its pole leans from square to the plane it and the sun move
+            // in, a way that holds among the stars as the world goes round.
+            let ahead = toward_of(dtd - v_behind + 0.002);
+            let along = (ahead - v_toward * ahead.dot(v_toward)).try_normalize().unwrap_or(Vec3::X);
+            let (sin_round, cos_round) = (std::f32::consts::TAU * visit.bearing).sin_cos();
+            let pole: Vec3 = v_toward.cross(along) * cos(GIANT_LEAN) + (v_toward * cos_round + along * sin_round) * sin(GIANT_LEAN);
+            material.sun = (transform.rotation.inverse() * light).extend(0.);
+            material.pole = (transform.rotation.inverse() * pole.normalize()).extend(0.);
+            material.color = LinearRgba::WHITE * GIANT_BRIGHTNESS;
+            let across = transform.rotation.inverse() * s_toward;
+            let radius = tan(v_wide / 2.).max(1e-5);
+            material.behind = if across.z < 0. {
+                (across.xy() / -across.z / radius).extend(s_near * tan(SUN_ANGULAR_DIAMETER / 2.) / radius).extend(1.)
+            } else {
+                Vec4::ZERO
+            };
+            continue;
+        }
+        let Some(mut material) = material.and_then(|material| disc_materials.get_mut(&material.0)) else { continue };
         match disc {
             Disc::Sun => {
                 material.color = s_light.color.to_linear() * SUN_DISC_BRIGHTNESS;
@@ -842,6 +961,7 @@ pub fn update(
                 material.sun = (transform.rotation.inverse() * light).extend(0.);
                 material.color = m_light.color.to_linear() * MOON_DISC_BRIGHTNESS;
             }
+            Disc::Visitor => {}
         }
     }
 

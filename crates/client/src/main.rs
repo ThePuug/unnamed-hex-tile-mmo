@@ -98,6 +98,7 @@ fn main() {
         MaterialPlugin::<world::SkyMaterial>::default(),
         MaterialPlugin::<crate::systems::rope::RopeMaterial>::default(),
     ));
+    app.add_plugins(MaterialPlugin::<world::GiantMaterial>::default());
     app.add_plugins((SettingsPlugin, ShellPlugin, InkPlugin, crate::plugins::cel::CelPlugin, crate::plugins::music::MusicPlugin, crate::plugins::sfx::SfxPlugin, crate::plugins::weather::WeatherPlugin));
     #[cfg(target_os = "windows")]
     app.add_plugins(crate::plugins::window_menu::WindowMenuPlugin);
