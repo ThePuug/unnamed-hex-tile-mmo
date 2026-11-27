@@ -154,6 +154,10 @@ pub fn process_respawn(
             // Remove respawn timer
             commands.entity(ent).remove::<RespawnTimer>();
 
+            // The tile is broadcast as any change of `Loc` is: the chunk
+            // stream and the summaries follow that, never the `Respawn`
+            writer.write(Do { event: Event::Incremental { ent, component: MessageComponent::Loc(*loc) } });
+
             // Clients stand it again at the spawn point, before its pools
             // say it is alive
             writer.write(Do { event: Event::Respawn { ent, qrz: spawn_qrz } });
