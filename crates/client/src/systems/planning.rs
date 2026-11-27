@@ -176,6 +176,14 @@ pub fn aimless(layout: &Layout, order: Order, cursor: (i32, i32)) -> bool {
     }
 }
 
+/// Whether no one is there to take `order`, of `planner`'s tab: the hub's
+/// settlers sleep, or it is the planner's own and the planner is off the
+/// hub. A hire is any settler's, so only sleep keeps it. Such an option
+/// is shown, and its key does nothing.
+pub fn absent(layout: &Layout, planner: Option<u8>, order: Order) -> bool {
+    layout.asleep || !matches!(order, Order::Hire(_)) && planner.is_some_and(|zone| layout.away & 1 << zone != 0)
+}
+
 /// Opens and shuts the planning on P, moves its cursor, chooses its
 /// action and asks the server after it, and has it done on Enter.
 #[allow(clippy::too_many_arguments)]
@@ -275,17 +283,21 @@ pub fn request(
         (planning.planner, planning.chosen, planning.answer) = (shown, usize::MAX, None);
     }
     let rows = listed(&layout, planning.planner, planning.cursor);
+    // One with no one there to take it, or nothing under the cursor to act on, has no key
+    let keyless = |order: Order| absent(&layout, planning.planner, order) || aimless(&layout, order, planning.cursor);
     // A digit chooses the option it numbers
-    let mut pressed = false;
+    let (mut chosen, mut pressed) = (planning.chosen, false);
     for (row, key) in ENTRY_KEYS.iter().enumerate().take(rows.len()) {
-        // One with nothing under the cursor to act on has no key
-        if !aimless(&layout, rows[row].0.order, planning.cursor) && keys.take(*key, "Choose this option") {
-            (planning.chosen, pressed) = (row, true);
+        if !keyless(rows[row].0.order) && keys.take(*key, "Choose this option") {
+            (chosen, pressed) = (row, true);
         }
     }
-    // The cursor moved off what the option chosen acted on: it is chosen no more
-    if rows.get(planning.chosen).is_some_and(|(row, _)| aimless(&layout, row.order, planning.cursor)) {
+    // The cursor moved off what the option chosen acted on, or its planner went: it is chosen no more
+    let dropped = rows.get(chosen).is_some_and(|(row, _)| keyless(row.order));
+    if dropped {
         (planning.chosen, planning.answer) = (usize::MAX, None);
+    } else if planning.chosen != chosen {
+        planning.chosen = chosen;
     }
     let Some((row, waits)) = rows.get(planning.chosen) else { return };
     let mut order = row.order;
@@ -515,7 +527,7 @@ pub fn update(mut commands: Commands, planning: Res<Planning>, mut rows: Query<(
             panel.spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(6.), align_items: AlignItems::FlexStart, padding: UiRect::vertical(Val::Px(8.)), ..default() }).with_children(|strip| {
                 crate::systems::keycap::keycap_at(strip, crate::cap!(KEYCODE_BEFORE), Node { margin: UiRect::left(Val::Px(8.)), ..default() });
                 for zone in tabs(layout) {
-                    let (shown, busy) = (planning.planner == Some(zone), layout.busy & 1 << zone != 0);
+                    let (shown, busy) = (planning.planner == Some(zone), layout.asleep || (layout.busy | layout.away) & 1 << zone != 0);
                     let frame = Node {
                         padding: UiRect::axes(Val::Px(10.), Val::Px(6.)),
                         border_radius: BorderRadius::right(Val::Px(6.)),
@@ -555,11 +567,15 @@ pub fn update(mut commands: Commands, planning: Res<Planning>, mut rows: Query<(
                         None => drop(under.spawn(sign(NO.to_owned(), 15.0, 0.6))),
                     }
                 });
-                // The planner whose tab is shown, named; one at work, with why
+                // The planner whose tab is shown, named; one asleep, off the hub or at work, with why
                 side.spawn(line.clone()).with_children(|named| {
                     if let Some(zone) = planning.planner {
                         named.spawn(sign(zone_name(zone).to_owned(), 15.0, 0.95));
-                        if layout.busy & 1 << zone != 0 {
+                        if layout.asleep {
+                            named.spawn(sign(ASLEEP.to_owned(), 15.0, 0.9));
+                        } else if layout.away & 1 << zone != 0 {
+                            named.spawn(sign(AWAY.to_owned(), 15.0, 0.9));
+                        } else if layout.busy & 1 << zone != 0 {
                             named.spawn(sign(WAITS.to_owned(), 15.0, 0.9));
                         }
                     }
@@ -573,10 +589,11 @@ pub fn update(mut commands: Commands, planning: Res<Planning>, mut rows: Query<(
                         BorderColor::all(if lit { Color::srgb(0.95, 0.8, 0.3) } else { UNWORN }),
                     ))
                     .with_children(|cell| {
-                        // One its planner will not do yet, or with nothing under the cursor to act on, is drawn dim, and marked
+                        // One its planner will not do yet, or is not there to take, or with nothing under the cursor to act on, is drawn dim, and marked
+                        let absent = absent(layout, planning.planner, row.order);
                         let aimless = aimless(layout, row.order, planning.cursor);
-                        let shade = if *waits || aimless { 0.45 } else { 0.9 };
-                        if aimless {
+                        let shade = if *waits || absent || aimless { 0.45 } else { 0.9 };
+                        if absent || aimless {
                             cell.spawn(Node { width: Val::Px(crate::systems::keycap::KEY_WIDTH), ..default() });
                         } else {
                             crate::systems::keycap::keycap(cell, crate::caps!(ENTRY_KEYS)[at]);
@@ -593,7 +610,9 @@ pub fn update(mut commands: Commands, planning: Res<Planning>, mut rows: Query<(
                                 cell.spawn(sign(count.to_string(), 13.0, shade));
                             }
                         }
-                        if aimless {
+                        if absent {
+                            cell.spawn(sign(if layout.asleep { ASLEEP } else { AWAY }.to_owned(), 15.0, 0.7));
+                        } else if aimless {
                             cell.spawn(sign(BARRED.to_owned(), 15.0, 0.7));
                         } else if *waits {
                             cell.spawn(sign(WAITS.to_owned(), 15.0, 0.7));
@@ -652,13 +671,16 @@ pub fn update(mut commands: Commands, planning: Res<Planning>, mut rows: Query<(
 }
 
 /// The signs the panel says things by, from the glyph font: people, a
-/// wall, yes and no, the cursor, what waits on work, what cannot be,
-/// what a plan adds and removes, and what the keys do.
+/// wall, yes and no, the cursor, what waits on work, a moon for a planner
+/// asleep and a road for one off the hub, what cannot be, what a plan
+/// adds and removes, and what the keys do.
 const PEOPLE: &str = "\u{f0c0}";
 const WALL: &str = "\u{f132}";
 const NO: &str = "\u{f00d}";
 const CURSOR: &str = "\u{f05b}";
 const WAITS: &str = "\u{f252}";
+const ASLEEP: &str = "\u{f186}";
+const AWAY: &str = "\u{f018}";
 const BARRED: &str = "\u{f05e}";
 const ADDS: &str = "\u{f067}";
 const REMOVES: &str = "\u{f068}";
@@ -784,6 +806,9 @@ mod tests {
         let waits: Vec<bool> = listed(&busy, Some(2), (1, 0)).into_iter().map(|(_, waits)| waits).collect();
         assert!(orders(2, &busy) == homes && waits.iter().rev().skip(1).all(|waits| *waits) && waits.last() == Some(&false), "one at work shows its options and does none, but a hire is no one's to wait on");
         assert_eq!(listed(&Layout { hired: 0, ..hub() }, None, (1, 0)).len(), 1, "with no planner, the hiring alone");
+        let (away, asleep) = (Layout { away: 1 << 1, ..hub() }, Layout { asleep: true, ..hub() });
+        assert!(absent(&away, Some(1), Order::Shrink) && !absent(&away, Some(1), Order::Hire(0)) && !absent(&away, Some(2), Order::Raise(Fixture::Tent)), "one off the hub takes none of its own, and a hire is any settler's");
+        assert!(absent(&asleep, Some(2), Order::Raise(Fixture::Tent)) && absent(&asleep, None, Order::Hire(0)), "asleep, no one takes anything");
     }
 
     /// Ground is of the zone whose centre is nearest, and the hub is

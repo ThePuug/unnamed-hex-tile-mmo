@@ -340,6 +340,11 @@ pub struct Layout {
     pub wants: u32,
     pub hired: u8,
     pub busy: u8,
+    /// The zones whose planner is off the hub and takes no order of its
+    /// own: the logistics planner, while it drives the wagon.
+    pub away: u8,
+    /// Whether its settlers sleep: none takes an order or a hire by night.
+    pub asleep: bool,
     pub hires: u8,
     pub walled: bool,
     pub defended: bool,

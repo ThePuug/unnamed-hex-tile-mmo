@@ -1758,19 +1758,21 @@ const SURVEYED: i32 = 12;
 /// Tells hub `id` how its ground lies, out to [`SURVEYED`] past it
 /// (`Hubs::survey`): nothing is planned on a tile that holds a tree, a
 /// stump, a boulder, reeds, a player's blockade or water, nor on both of
-/// two tiles side by side whose levels a walker does not step between.
-/// A tile the map does not hold yet is neither. Looked at anew before
+/// two tiles side by side whose levels a walker does not step between,
+/// and its wall's way in is placed by the level of each tile looked at.
+/// A tile the map does not hold yet is none of them. Looked at anew before
 /// anything is planned, since trees are felled and blockades built.
 pub(crate) fn survey(site: &mut Site, id: common_bevy::hubs::HubId) {
     use common::cover::Content;
     use std::collections::BTreeSet;
     let (Some(hearth), Some(ground)) = (site.hubs.hearth(id), site.hubs.ground(id)) else { return };
     let reach = ground.tiles.iter().map(|&tile| qrz::hex_distance(tile, hearth)).max().unwrap_or(0) + SURVEYED;
-    let (mut barred, mut cliffs) = (BTreeSet::new(), BTreeSet::new());
+    let (mut barred, mut cliffs, mut levels) = (BTreeSet::new(), BTreeSet::new(), Vec::new());
     for q in -reach..=reach {
         for r in (-reach).max(-q - reach)..=reach.min(-q + reach) {
             let tile = (hearth.0 + q, hearth.1 + r);
             let Some((z, cover)) = site.ground.lies(tile.0, tile.1) else { continue };
+            levels.push((tile, z));
             let grown = (0..common::TILE_SLOTS as usize).any(|k| matches!(cover.content(k), Content::Pine | Content::Deciduous | Content::PineStump | Content::DeciduousStump | Content::Boulder | Content::Reed));
             let blocked = building::standing(cover).is_some_and(|construct| construct.kind == Kind::Blockade);
             if grown || blocked || site.ground.map().water_at(tile.0, tile.1).is_some() {
@@ -1785,12 +1787,12 @@ pub(crate) fn survey(site: &mut Site, id: common_bevy::hubs::HubId) {
             }
         }
     }
-    site.hubs.survey(id, barred, cliffs);
+    site.hubs.survey(id, barred, cliffs, levels);
 }
 
 /// Answers each player that asks for the hub it stands in as its
 /// planning shows it.
-pub fn try_layout(mut reader: MessageReader<Try>, mut site: Site, camps: Res<Camps>, players: Query<&Loc>) {
+pub fn try_layout(mut reader: MessageReader<Try>, mut site: Site, camps: Res<Camps>, time: Res<Time>, runtime: Res<combat::RunTime>, players: Query<&Loc>) {
     for message in reader.read() {
         let Try { event: Event::Layout { ent, .. } } = message else { continue };
         let Ok(loc) = players.get(*ent) else {
@@ -1801,13 +1803,19 @@ pub fn try_layout(mut reader: MessageReader<Try>, mut site: Site, camps: Res<Cam
         if let Some(id) = held {
             survey(&mut site, id);
         }
-        let layout = held.and_then(|id| laid_out(&site, &camps, id));
+        let layout = held.and_then(|id| laid_out(&site, &camps, id, runtime.when(&time)));
         site.writer.write(Do { event: Event::Layout { ent: *ent, layout } });
     }
 }
 
-/// Hub `id` as its planning shows it.
-fn laid_out(site: &Site, camps: &Camps, id: common_bevy::hubs::HubId) -> Option<common::building::Layout> {
+/// The zone of `camp` whose planner is off the hub and takes no order of
+/// its own: the logistics planner, while it drives the wagon.
+fn away(camp: &Camp) -> Option<Zone> {
+    camp.trip.is_some().then_some(Zone::Logistics)
+}
+
+/// Hub `id` as its planning shows it at `when`.
+fn laid_out(site: &Site, camps: &Camps, id: common_bevy::hubs::HubId, when: When) -> Option<common::building::Layout> {
     let (hub, ground) = (site.hubs.hub(id)?, site.hubs.ground(id)?);
     let camp = camps.camps.iter().find(|(key, _)| site.hubs.of_hearth(**key) == Some(id)).map(|(_, camp)| camp);
     let bits = |zones: &mut dyn Iterator<Item = Zone>| zones.fold(0u8, |bits, zone| bits | 1 << zone.id());
@@ -1825,6 +1833,8 @@ fn laid_out(site: &Site, camps: &Camps, id: common_bevy::hubs::HubId) -> Option<
         wants: hub.wants,
         hired: bits(&mut site.hubs.hired(id)),
         busy: bits(&mut camp.into_iter().flat_map(|camp| camp.rising.iter().map(|(step, ..)| step.zone()))),
+        away: bits(&mut camp.and_then(away).into_iter()),
+        asleep: when.is_night(),
         hires: Zone::ALL.into_iter().find(|&zone| site.hubs.hires(id, zone)).map_or(0, |zone| zone.id() as u8),
         walled: site.hubs.walled(id),
         defended: ground.wall.len() <= common_bevy::plan::defended(hub),
@@ -1920,8 +1930,10 @@ pub fn try_plan(
         };
         // An order goes to the planner whose it is, whichever settler stands
         // nearest: it is given from the plan of the hub, not to one settler.
-        // One at work still says what an order would do, and only does none
-        let hailed = camp.filter(|&key| !(carry && busy(key, asked)));
+        // One at work still says what an order would do, and only does none;
+        // one off with the wagon says nothing of its own
+        let gone = |key: (i32, i32)| asked.is_some() && camps.on(key).and_then(away) == asked;
+        let hailed = camp.filter(|&key| !(carry && busy(key, asked)) && !gone(key));
         if let (Order::Hire(zone), Some(key), true) = (order, hailed, carry) {
             let hired = site.hubs.of_hearth(key).is_some_and(|id| Zone::kept_as(zone).or_else(|| Zone::ALL.into_iter().find(|&zone| site.hubs.hires(id, zone))).is_some_and(|zone| site.hubs.hire(id, zone)));
             info!("settlers: {ent} asked the hub of {key:?} to hire a planner for zone {zone}: {}", if hired { "hired" } else { "refused" });
