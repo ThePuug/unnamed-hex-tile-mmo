@@ -641,8 +641,10 @@ impl Hub {
 
     /// A place for a thing of `kind` and `size` as near `from` as it fits
     /// on `on`: in its own zone, in another where its own has no room,
-    /// and where no open ground takes it, on ground a derelict building
-    /// holds, which is taken out of the hub and handed back.
+    /// and where no open ground takes it, on ground of its own zone a
+    /// derelict building holds, which is taken out of the hub and handed
+    /// back. Outside its zone it would stand derelict itself, and the next
+    /// would take its ground the same.
     fn seated(&mut self, kind: Kind, size: usize, from: Point, on: &BTreeSet<Tile>, but: &[u32]) -> Option<(Vec<Tile>, f64, Vec<Item>)> {
         let own = self.cell(kind, on);
         if let Some((tiles, far)) = self.placed(size, from, &own, but).or_else(|| self.placed(size, from, on, but)) {
@@ -650,7 +652,7 @@ impl Hub {
         }
         let derelict: Vec<u32> = self.items.iter().filter(|item| self.derelict(item)).map(|item| item.id).collect();
         let skip = [but, &derelict[..]].concat();
-        let (tiles, far) = self.placed(size, from, &own, &skip).or_else(|| self.placed(size, from, on, &skip))?;
+        let (tiles, far) = self.placed(size, from, &own, &skip)?;
         let near: Vec<u32> = derelict.into_iter().filter(|&id| self.item(id).is_some_and(|item| gap(&tiles, &item.tiles) < SPACE - EPS)).collect();
         let wrecked = near.into_iter().filter_map(|id| self.pull(id)).collect();
         Some((tiles, far, wrecked))
@@ -736,8 +738,8 @@ pub fn lodge(hub: &Hub, id: u32, out: bool) -> Option<Outcome> {
 
 /// A building of `what` raised in `hub` as near its zone's centre as it
 /// fits on the hub's claim: in its zone, in another only where its own
-/// has no room, and where no open ground takes it, on ground a derelict
-/// building holds, which comes down for it. None where its zone is not
+/// has no room, and where no open ground takes it, on ground of its zone
+/// a derelict building holds, which comes down for it. None where its zone is not
 /// placed, it fits nowhere, or it would close the walk from the hearth to
 /// the wall.
 pub fn raise(hub: &Hub, what: What) -> Option<Outcome> {
@@ -1512,6 +1514,26 @@ mod tests {
             let back = done(zone(&away, Zone::Market, (2, 0)));
             assert!(!back.stranded(back.item(shop).unwrap()));
         }
+    }
+
+    /// A hub with no room left refuses a home. Homes raised outside the
+    /// residential zone for want of room in it stand empty and stranded,
+    /// and none of them comes down for another that would stand the same.
+    #[test]
+    fn a_full_hub_refuses_a_home() {
+        let hub = housed(done(plan(&camp((0, 0)), 20)));
+        let lie = hub.lies();
+        let far = lie.ground.iter().copied().filter(|tile| !lie.wall.contains(tile)).min_by(|a, b| flat(*a).0.total_cmp(&flat(*b).0)).unwrap();
+        let mut hub = done(zone(&hub, Zone::Market, far));
+        let mut raised = 0;
+        while let Some(more) = raise(&hub, What::Home) {
+            assert!(more.razed.is_empty(), "no home comes down for a home");
+            hub = more.hub;
+            raised += 1;
+            assert!(raised < 200, "a hub of this size is full long before");
+        }
+        assert!(hub.items.iter().any(|item| item.kind.what == What::Home && hub.stranded(item)), "its homes spilled past their zone");
+        sound(&hub);
     }
 
     /// Planned for one fewer, a hub gives up ground and nothing else:
