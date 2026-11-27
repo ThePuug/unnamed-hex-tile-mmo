@@ -60,7 +60,10 @@ pub struct SkyMaterial {
     /// The camera's fog colour, which the sky is at the horizon.
     #[uniform(0)]
     pub haze: LinearRgba,
-    /// In `x`, how far out the stars are.
+    /// In `x`, how far out the stars are; in `y`, the share of the sun
+    /// the visitor covers; in `z`, the sine of elevation the haze clears
+    /// at; in `w`, how far the air about the camera hides the stars low
+    /// down.
     #[uniform(0)]
     pub night: Vec4,
     /// The columns of what takes a direction in the world to its place
@@ -74,6 +77,19 @@ pub struct SkyMaterial {
     /// The guide stars (`common_bevy::sky::guides`).
     #[uniform(0)]
     pub guides: [Vec4; common_bevy::sky::GUIDES],
+    /// The pale band: its great circle's pole and its core
+    /// (`common_bevy::sky::band`, `core`), and its glowing clouds
+    /// (`nebulae`).
+    #[uniform(0)]
+    pub band: Vec4,
+    #[uniform(0)]
+    pub core: Vec4,
+    #[uniform(0)]
+    pub nebulae: [Vec4; 2],
+    /// To the visitor, a unit vector in the world, and in `w` its radius
+    /// as a chord, none while there is no visitor.
+    #[uniform(0)]
+    pub visitor: Vec4,
 }
 
 impl Material for SkyMaterial {
@@ -107,8 +123,8 @@ pub enum Disc { Sun, Moon }
 /// lit from `sun` in the disc's own frame, +z toward the camera, so the
 /// moon's phase shows with its lit limb toward the sun and the sun is
 /// full; the rest is the sky. The body's `face`, if it has one, is shown
-/// once and whole, inscribed. Below `waterline` there is no disc, so it
-/// sets into the sea instead of showing through it. Shaded by
+/// once and whole, inscribed. Under the horizontal through the eye there is
+/// no disc, so it sets into the sea instead of showing through it. Shaded by
 /// `shaders/disc.wesl`.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct DiscMaterial {
@@ -116,16 +132,21 @@ pub struct DiscMaterial {
     pub sun: Vec4,
     #[uniform(0)]
     pub color: LinearRgba,
+    /// A nearer body across this one, which hides it: its centre and, in
+    /// `z`, its radius, in this disc's radii.
     #[uniform(0)]
-    pub waterline: f32,
+    pub bite: Vec4,
     #[texture(1)]
     #[sampler(2)]
     pub face: Option<Handle<Image>>,
 }
 
+/// No body across a disc: one of no size, far off it.
+const NO_BITE: Vec4 = Vec4::new(10., 0., 0., 0.);
+
 impl DiscMaterial {
     fn new(face: Option<Handle<Image>>) -> Self {
-        Self { sun: Vec4::Z, color: LinearRgba::WHITE, waterline: crate::plugins::water::SEA_LEVEL_Y, face }
+        Self { sun: Vec4::Z, color: LinearRgba::WHITE, bite: NO_BITE, face }
     }
 }
 
@@ -159,14 +180,48 @@ const MOON_DISC_BRIGHTNESS: f32 = 1.0;
 const SUNRISE: f32 = common_bevy::systems::NIGHT.1 as f32 / 24.;
 const NOON: f32 = common_bevy::systems::NOON as f32 / 24.;
 const SUNSET: f32 = common_bevy::systems::NIGHT.0 as f32 / 24.;
-/// When the moon rises and sets: up from two hours before the sun sets
-/// to two after it rises, so some light is always up. It stands highest
+/// When the moon rises and sets: up from an hour before the sun sets
+/// to an hour after it rises, so some light is always up. It stands highest
 /// the same share of the way through its time up as the sun does through
-/// its own, quick to rise and slow to set as the sun is: half past
-/// midnight, counted on from its rise.
-const MOONRISE: f32 = 20. / 24.;
-const MOONSET: f32 = 8. / 24.;
+/// its own, quick to rise and slow to set as the sun is: a quarter to one
+/// in the morning, counted on from its rise.
+const MOONRISE: f32 = 21. / 24.;
+const MOONSET: f32 = 7. / 24.;
 const MOON_HIGH: f32 = MOONRISE + (1. + MOONSET - MOONRISE) * (NOON - SUNRISE) / (SUNSET - SUNRISE);
+/// The visitor, the dark thing the world goes once round in a leap season.
+/// It gives no light and takes none: across it the sky is a deep violet
+/// by day and by night, the stars and the sun behind it hidden, and the
+/// light bent round it a pale rim. Where it stands from the sun, how
+/// near it is, and what the sun does meanwhile are
+/// `common_bevy::sky::visit`'s; it is drawn on the sun's own track that
+/// far behind the sun, so it meets the sun where the sun is.
+///
+/// How wide it is at its nearest, all the while it holds the world.
+const VISITOR_WIDE: f32 = 10_f32.to_radians();
+/// The share of the sky's light left with the sun wholly covered, and of
+/// the sun's halo, which stands about the dark disc.
+const ECLIPSE_SKY: f32 = 0.02;
+const ECLIPSE_HALO: f32 = 0.3;
+/// The sun's light with the sun all but covered, linear: what comes round
+/// the visitor comes cold and violet. The halo and what is left of the
+/// disc are the light's colour, so they turn with it.
+const ECLIPSE_LIGHT: Vec3 = Vec3::new(0.6, 0.5, 1.0);
+
+/// The share of a disc of radius `r` covered by one of radius `over`
+/// whose centre is `apart` from its own, all in one measure.
+fn covered(apart: f32, r: f32, over: f32) -> f32 {
+    if over <= 0. || apart >= r + over {
+        return 0.;
+    }
+    if apart <= (over - r).abs() {
+        return (over / r).min(1.).powi(2);
+    }
+    let lens = r * r * ((apart * apart + r * r - over * over) / (2. * apart * r)).acos()
+        + over * over * ((apart * apart + over * over - r * r) / (2. * apart * over)).acos()
+        - 0.5 * ((r + over - apart) * (apart + r - over) * (apart - r + over) * (apart + r + over)).sqrt();
+    lens / (PI * r * r)
+}
+
 /// How far the sun's rise and set swing from east and west at the
 /// season's height: its whole circle leans that far south and back.
 const SEASON_SWING: f32 = 25_f32.to_radians();
@@ -294,8 +349,36 @@ fn starlit(e: f32) -> f32 {
 
 /// The fire's colours at their fullest, linear: the ember at the horizon,
 /// brighter than white so it glares, and the rose it turns to higher up.
-const EMBER: Vec3 = Vec3::new(1.7, 0.42, 0.05);
-const ROSE: Vec3 = Vec3::new(0.85, 0.28, 0.36);
+/// They go by the air the light comes through (`weather::Air`): gold and
+/// peach through clean air to a deep red through dust, softened to rose
+/// by damp, and paled where rain has lately washed it.
+const EMBER_CLEAN: Vec3 = Vec3::new(1.5, 0.72, 0.28);
+const ROSE_CLEAN: Vec3 = Vec3::new(0.95, 0.55, 0.45);
+const EMBER_DUST: Vec3 = Vec3::new(1.7, 0.3, 0.03);
+const ROSE_DUST: Vec3 = Vec3::new(0.8, 0.18, 0.24);
+const EMBER_DAMP: Vec3 = Vec3::new(1.3, 0.45, 0.32);
+const ROSE_DAMP: Vec3 = Vec3::new(0.9, 0.4, 0.58);
+const DAMP_SHARE: f32 = 0.6;
+const WASHED_SHARE: f32 = 0.7;
+/// How much of the fire is left with the far sky toward the sun shut by
+/// cloud, through air with no dust in it, and after rain: the three
+/// multiply, so the whole of it burns only through dust under an open
+/// far sky.
+const FIRE_SHUT: f32 = 0.12;
+const FIRE_CLEAN: f32 = 0.55;
+const FIRE_WASHED: f32 = 0.65;
+
+/// The fire's ember and rose through `air`, and the share of it that
+/// burns.
+fn crossing(air: common_bevy::weather::Air) -> (Vec3, Vec3, f32) {
+    let through = |clean: Vec3, dust: Vec3, damp: Vec3| {
+        clean.lerp(dust, air.dust).lerp(damp, DAMP_SHARE * air.damp).lerp(clean, WASHED_SHARE * air.washed)
+    };
+    let share = (FIRE_SHUT + (1. - FIRE_SHUT) * air.open)
+        * (FIRE_CLEAN + (1. - FIRE_CLEAN) * air.dust)
+        * (1. - (1. - FIRE_WASHED) * air.washed);
+    (through(EMBER_CLEAN, EMBER_DUST, EMBER_DAMP), through(ROSE_CLEAN, ROSE_DUST, ROSE_DAMP), share)
+}
 /// The clouds the low sun has lit longest, and a cloud's hem against the
 /// sun at the crossing; by day a hem is white. None glares: a cloud
 /// brighter than white draws as a white blot about the sun.
@@ -322,6 +405,16 @@ const DUSK_SKY: Vec3 = Vec3::new(0.09, 0.16, 0.5);
 /// The sun's halo, the same by day and at the crossing: a brighter one
 /// whitens the sky further out, and the sun grows as it nears the horizon.
 const HALO: f32 = 0.5;
+/// The share of it left as the sun stands on the horizon, where its direct
+/// light is spent, and how far under the sun is when the last of it goes.
+const HALO_LOW: f32 = 0.8;
+/// How high the haze stands on the sky, as sines of elevation: through
+/// clear air, and through the thickest, which is mist, rain, a storm or
+/// `HAZE_DUST` of the air's dust.
+const HAZE_TOP_CLEAR: f32 = 0.14;
+const HAZE_TOP_THICK: f32 = 0.25;
+const HAZE_DUST: f32 = 0.6;
+const HALO_UNDER: f32 = 3_f32.to_radians();
 /// The clear sky on a moonless night: never black, so the stars stand on
 /// a deep blue.
 const NIGHT_SKY: Vec3 = Vec3::new(0.0035, 0.006, 0.016);
@@ -401,11 +494,15 @@ pub fn setup(
             rose: LinearRgba::BLACK,
             halo: LinearRgba::BLACK,
             haze: LinearRgba::BLACK,
-            night: Vec4::ZERO,
+            night: Vec4::new(0., 0., HAZE_TOP_CLEAR, 0.),
             turn_east: Vec4::X,
             turn_up: Vec4::Y,
             turn_south: Vec4::Z,
             guides: common_bevy::sky::guides(),
+            band: common_bevy::sky::band().extend(0.),
+            core: common_bevy::sky::core().extend(0.),
+            nebulae: common_bevy::sky::nebulae(),
+            visitor: Vec4::X,
         })),
         Transform::default(),
         NotShadowCaster,
@@ -555,20 +652,42 @@ pub fn update(
     // The sky keeps wall-clock time (`Server::wall`), whole milliseconds
     // until each fraction below. The sun keeps the clock's hour, noon at
     // 12:00; its path swings with the year's phase, and the moon's phase
-    // runs once per season.
+    // runs once per season. About a leap season the year the sky keeps
+    // is the visit's: where the visitor took the world, and as far on as
+    // the sun has moved among the stars since.
     let wall = server.wall(server.now(time.elapsed().as_millis()));
-    let (year_start, year_len) = Date::year(wall);
     let dtd = (wall % DAY_MS) as f32 / DAY_MS as f32;
     let dtm = (wall - Date::season_start(wall)) as f32 / SEASON_MS as f32;
-    let dty = (wall - year_start) as f32 / year_len as f32;
+    let visit = Date::visitor(wall).map(|t| (t as f32, common_bevy::sky::visit(t as f32)));
+    let taken = 1. + VISIT_FROM as f32 / (4 * SEASON_MS) as f32;
+    let dty = visit.map_or(Date::turned(wall) as f32, |(_, visit)| taken + visit.sun);
+    // The sun's disc, as a share of its own, by how far off the sun is.
+    let s_near = visit.map_or(1., |(_, visit)| 1. / visit.far);
 
     // sun
     let (mut s_light, mut s_transform, mut cascade_config) = q_sun.single_mut().expect("no result in q_sun");
     let s_orbit = orbit(dtd, SUNRISE, NOON, SUNSET);
-    let s_toward = toward(s_orbit, tan(SEASON_SWING) * cos(dty * 2. * PI));
+    let s_tilt = tan(SEASON_SWING) * cos(dty * 2. * PI);
+    let s_toward = toward(s_orbit, s_tilt);
     let s_elevation = elevation(s_toward);
+
+    // The visitor: behind the sun on the sun's track by as much of a day
+    // as it stands east of it, and as wide as it is near. It fades in
+    // over the first tenth of the season before and out over the last
+    // of the season after, where it is a speck.
+    let (v_behind, v_wide) = visit.map_or((0., 0.), |(t, visit)| {
+        (visit.east, VISITOR_WIDE * visit.near * smoothstep(-1., -0.9, t) * (1. - smoothstep(1.9, 2., t)))
+    });
+    let v_toward = toward(orbit(dtd - v_behind, SUNRISE, NOON, SUNSET), s_tilt);
+    let open = 1. - covered(s_toward.angle_between(v_toward), s_near * SUN_ANGULAR_DIAMETER / 2., v_wide / 2.);
+
     let s_direct = direct(s_elevation);
-    let sky_bright = smoothstep(-TWILIGHT_BELOW, CLEAR_ABOVE, s_elevation);
+    let sky_bright = smoothstep(-TWILIGHT_BELOW, CLEAR_ABOVE, s_elevation) * (ECLIPSE_SKY + (1. - ECLIPSE_SKY) * open);
+    // The stars' dark: the night's, or the sun wholly covered.
+    let dark = starlit(s_elevation).max(1. - smoothstep(0., 0.05, open));
+    // The sky is the sun's light scattered, so it turns with it: under a
+    // deck the sky's light is most of what reaches the ground.
+    let eclipsed = Vec3::ONE.lerp(ECLIPSE_LIGHT, 1. - open);
     let sky_tint = tint(smoothstep(-GLOW_BELOW, CLEAR_ABOVE, s_elevation));
     // The weather over the camera: the deck takes the direct light and
     // gives some back as the sky's, and rain, a storm and the leap
@@ -579,14 +698,15 @@ pub fn update(
     let dusk = 1. - OMEN_DUSK * pall;
     let shaded = 1. - CLOUD_SHADE * cover;
     let gloom = (1. - RAIN_GLOOM * here.rain - STORM_GLOOM * here.storm) * dusk;
-    s_light.color = tint(s_direct);
-    s_light.illuminance = SUN_ILLUMINANCE * s_direct * shaded * gloom;
+    let s_color = tint(s_direct).to_linear().to_vec3().lerp(ECLIPSE_LIGHT, 1. - open);
+    s_light.color = Color::linear_rgb(s_color.x, s_color.y, s_color.z);
+    s_light.illuminance = SUN_ILLUMINANCE * s_direct * open * shaded * gloom;
     *s_transform = Transform::from_translation(cast_from(s_toward) * 1_000.).looking_at(Vec3::ZERO, Vec3::Y);
 
     // The sky: lit through twilight, reddened around the crossing, and
     // the ambient is its light on the ground, blue as it is overhead, and
     // the lightning's and the fireballs' while they burn.
-    let sky_light = Vec3::new(0.7 + 0.3 * sky_bright, 0.8 + 0.2 * sky_bright, 1.0)
+    let sky_light = Vec3::new(0.7 + 0.3 * sky_bright, 0.8 + 0.2 * sky_bright, 1.0) * eclipsed
         * (800. * sky_bright * (1. + CLOUD_AMBIENT * cover) * gloom + FLASH_AMBIENT * weather.flash)
         + BLAZE_AMBIENT * weather.blaze;
     a_light.brightness = sky_light.max_element();
@@ -616,7 +736,7 @@ pub fn update(
     // by the rain and lit by the flash.
     let moon = m_light.color.to_linear().to_vec3() * (m_clear / SUN_ILLUMINANCE);
     let sky_tint = sky_tint.to_linear().to_vec3();
-    let lit = |tint: Vec3| LinearRgba::from_vec3(HAZE_COLOR.to_linear().to_vec3() * (tint * sky_bright + moon));
+    let lit = |tint: Vec3| LinearRgba::from_vec3(HAZE_COLOR.to_linear().to_vec3() * (tint * eclipsed * sky_bright + moon));
     let haze = lit(Vec3::ONE.lerp(sky_tint, HAZE_TINT_SHARE)).to_vec3();
     let grey = LinearRgba::from_vec3(haze).luminance();
     let haze = LinearRgba::from_vec3(
@@ -632,22 +752,36 @@ pub fn update(
         * (1. - (1. - STORM_VISIBILITY) * here.storm);
     fog.falloff = FogFalloff::Exponential { density: crate::systems::camera::haze_density() / visibility };
     // The fire of the crossing: lit by what light is left, dimmed by the
-    // weather; the stars come out as it dies, less under a bright moon.
-    let burning = fire(s_elevation);
+    // weather, and made of the air its light comes through; the stars
+    // come out as it dies, less under a bright moon.
+    // A covered sun lights no air past the horizon, so it raises no
+    // fire, and what a part-covered one raises is its light's colour.
+    let sunward = s_toward.xz().try_normalize().unwrap_or(Vec2::X);
+    let air = weather.forecast.air(wall, weather.at.0, weather.at.1, (sunward.x as f64, sunward.y as f64));
+    let (ember, rose, share) = crossing(air);
+    // The halo is the sun's own glare, not the fire's: it stands about
+    // the disc until the disc is under, through whatever far cloud lets.
+    let s_glare = s_direct.max(HALO_LOW * air.open.max(FIRE_SHUT) * smoothstep(-HALO_UNDER, 1_f32.to_radians(), s_elevation));
+    // Its colour low down is the fire's, not the light's: the light on
+    // the ground goes to pure red, too dark a colour to glare.
+    let s_glow = (ember / ember.max_element()).lerp(Vec3::ONE, s_direct).lerp(ECLIPSE_LIGHT, 1. - open);
+    let burning = fire(s_elevation) * open * share;
     let left = (0.3 + 0.7 * sky_bright) * gloom;
-    let (ember, rose) = (EMBER * left, ROSE * left);
-    let stars = starlit(s_elevation) * (1. - MOON_WASH * m_lit * direct(elevation(m_toward))) * gloom;
+    let (ember, rose) = (ember * left * eclipsed, rose * left * eclipsed);
+    let stars = dark * (1. - MOON_WASH * m_lit * direct(elevation(m_toward))) * gloom;
     let bearing = s_toward.xz().try_normalize().unwrap_or(Vec2::X).extend(burning).extend(s_toward.y);
     if let Some(mut sky) = q_sky.single().ok().and_then(|m| sky_materials.get_mut(&m.0)) {
         let sphere = Mat3::from_quat(common_bevy::sky::turning(dtd, dty).inverse());
         sky.sun = s_toward.extend(burning);
         let day = lit(Vec3::ONE).to_vec3().lerp(DUSK_SKY * left, 0.9 * burning);
-        sky.base = LinearRgba::from_vec3(day + BLAZE_SKY * weather.blaze + NIGHT_SKY * starlit(s_elevation));
+        sky.base = LinearRgba::from_vec3(day + BLAZE_SKY * weather.blaze + NIGHT_SKY * dark);
         sky.ember = LinearRgba::from_vec3(ember);
         sky.rose = LinearRgba::from_vec3(rose);
-        sky.halo = LinearRgba::from_vec3(s_light.color.to_linear().to_vec3() * HALO * s_direct.max(burning * sky_bright) * gloom * (1. - 0.6 * cover));
+        sky.halo = LinearRgba::from_vec3(s_glow * HALO * s_glare * (ECLIPSE_HALO + (1. - ECLIPSE_HALO) * open) * gloom * (1. - 0.6 * cover));
         sky.haze = haze;
-        sky.night = Vec4::new(stars, 0., 0., 0.);
+        let thick = (1. - visibility).max(HAZE_DUST * air.dust);
+        sky.night = Vec4::new(stars, 1. - open, HAZE_TOP_CLEAR + (HAZE_TOP_THICK - HAZE_TOP_CLEAR) * thick, 1. - visibility);
+        sky.visitor = v_toward.extend(2. * sin(v_wide / 4.));
         (sky.turn_east, sky.turn_up, sky.turn_south) = (sphere.x_axis.extend(0.), sphere.y_axis.extend(0.), sphere.z_axis.extend(0.));
     }
 
@@ -657,16 +791,16 @@ pub fn update(
     // the hems and through the gaps; the weather over each place is the
     // map's. A far cloud fades by the fog's rule.
     if let Some(mut clouds) = q_clouds.single().ok().and_then(|m| cloud_materials.get_mut(&m.0)) {
-        let light = Vec3::splat(sky_bright) + moon;
-        let reaching = smoothstep(-7_f32.to_radians(), -2_f32.to_radians(), s_elevation) * gloom;
+        let light = eclipsed * sky_bright + moon;
+        let reaching = smoothstep(-7_f32.to_radians(), -2_f32.to_radians(), s_elevation) * gloom * open;
         clouds.light = LinearRgba::from_vec3(light * CLOUD_LIGHT * dusk);
         clouds.shade = LinearRgba::from_vec3(lit(Vec3::ONE).to_vec3().lerp(light, 0.3) * CLOUD_UNDERSIDE * dusk);
         clouds.glow = LinearRgba::from_vec3(ember * CLOUD_EMBER);
         clouds.rose = LinearRgba::from_vec3(rose);
-        clouds.gold = LinearRgba::from_vec3(GOLD * left);
+        clouds.gold = LinearRgba::from_vec3(GOLD * left * eclipsed);
         clouds.lining = LinearRgba::from_vec3(GILT.lerp(Vec3::splat(HEM_BY_DAY), s_direct)).with_alpha(reaching);
         clouds.bearing = bearing;
-        clouds.dawn = Vec4::new(caught_from(s_elevation), (1.5 * burning).min(1.), s_direct, burning.max(RAYS_BY_DAY * s_direct));
+        clouds.dawn = Vec4::new(caught_from(s_elevation), (1.5 * burning).min(1.), s_direct * open, burning.max(RAYS_BY_DAY * s_direct * open));
         clouds.deck = Vec4::new(DECK_HEIGHT, crate::systems::camera::haze_density() / visibility, weather.flash, OMEN_PALL * pall);
         clouds.frame = weather.frame;
         clouds.drift = weather.drift.extend(0.).extend(0.);
@@ -680,7 +814,7 @@ pub fn update(
 
     // Each disc faces the camera from its body's direction, in its light's
     // colour; the ground occludes it as it sets and its shader cuts it at
-    // the waterline.
+    // the horizontal.
     let camera = camera.translation();
     for (disc, mut transform, material) in &mut q_discs {
         let toward = match disc { Disc::Sun => s_toward, Disc::Moon => m_toward };
@@ -688,7 +822,18 @@ pub fn update(
         transform.rotation = Quat::from_rotation_arc(Vec3::Z, -toward);
         let Some(mut material) = disc_materials.get_mut(&material.0) else { continue };
         match disc {
-            Disc::Sun => material.color = s_light.color.to_linear() * SUN_DISC_BRIGHTNESS,
+            Disc::Sun => {
+                material.color = s_light.color.to_linear() * SUN_DISC_BRIGHTNESS;
+                // Where the visitor stands on the sun's disc, in its radii.
+                transform.scale = Vec3::splat(s_near);
+                let across = transform.rotation.inverse() * v_toward;
+                let radius = s_near * tan(SUN_ANGULAR_DIAMETER / 2.);
+                material.bite = if v_wide > 0. && across.z < 0. {
+                    (across.xy() / -across.z / radius).extend(tan(v_wide / 2.) / radius).extend(0.)
+                } else {
+                    NO_BITE
+                };
+            }
             Disc::Moon => {
                 let facing = -m_toward;
                 let sunward = (s_toward - s_toward.dot(facing) * facing).try_normalize().unwrap_or(Vec3::Y);
@@ -1503,6 +1648,21 @@ pub fn poll_summary_meshes(
 mod tests {
     use super::*;
 
+    /// A body across the sun covers none of it apart, all of it over it
+    /// when it is the wider, and more the nearer it comes.
+    #[test]
+    fn a_body_covers_more_of_the_sun_the_nearer_it_comes() {
+        let (r, over) = (1., 1.5);
+        assert_eq!((covered(2.5, r, over), covered(0.4, r, over), covered(1., r, 0.)), (0., 1., 0.));
+        assert!((covered(0., r, 0.5) - 0.25).abs() < 1e-6, "a smaller one covers its own area");
+        let mut last = 0.;
+        for step in (0..=50).rev() {
+            let share = covered(step as f32 * 0.05, r, over);
+            assert!(share >= last - 1e-5 && (0. ..=1.).contains(&share));
+            last = share;
+        }
+    }
+
     /// The sun and the moon are each above the horizon exactly from
     /// their rise to their set and highest at their own hour; each orbit
     /// runs on one way without a break, and its pace never changes at
@@ -1533,7 +1693,7 @@ mod tests {
         let advance = |t: f32| (orbit(t + step, SUNRISE, NOON, SUNSET) - orbit(t, SUNRISE, NOON, SUNSET)).rem_euclid(2. * PI);
         let (morning, afternoon, night) = (advance((SUNRISE + NOON) / 2.), advance((NOON + SUNSET) / 2.), advance((SUNSET + 1. + SUNRISE) / 2.));
         assert!(afternoon < morning && afternoon < night, "{morning} {afternoon} {night}");
-        assert!((MOON_HIGH.rem_euclid(1.) - 0.5 / 24.).abs() < 1e-5, "the moon is as quick to rise and slow to set as the sun");
+        assert!((MOON_HIGH.rem_euclid(1.) - 0.75 / 24.).abs() < 1e-5, "the moon is as quick to rise and slow to set as the sun");
     }
 
     /// The fire burns only about the crossing, fullest with the sun on

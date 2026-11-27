@@ -14,7 +14,7 @@ use std::f64::consts::{FRAC_PI_2, PI};
 
 use bevy::math::Vec3;
 
-use crate::systems::{Date, DAY_MS, HOUR_MS, SEASON_MS};
+use crate::systems::{Date, DAY_MS, HOUR_MS};
 
 /// The weather over a place, each a share from none to full.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -65,6 +65,31 @@ pub fn drift(ms: u128) -> (f64, f64) {
 
 /// How each season wets its fronts.
 const SEASON_WETNESS: [f64; 5] = [0.04, -0.08, 0.04, 0.0, 0.05];
+/// How much dust each season's air carries and how damp it is, which a
+/// low sun's fire leans by: Thaw's clean and pale, Blaze's dry, Ash's
+/// the dustiest and reddest, Freeze's damp and pink.
+const SEASON_DUST: [f64; 5] = [0.15, 0.7, 1.0, 0.3, 0.5];
+const SEASON_DAMP: [f64; 5] = [0.3, 0.0, 0.1, 0.7, 0.4];
+/// How far toward the low sun its light comes in under the deck: cloud
+/// standing there, or twice as far, shuts the fire out.
+const SUNWARD_WU: f64 = 10_000.0;
+/// The size of a dust haze, and how long rain leaves the air washed.
+const DUST_SCALE_WU: f64 = 20_000.0;
+const WASHED_MS: [u128; 2] = [HOUR_MS, 2 * HOUR_MS];
+
+/// The air a low sun's light comes through to a place, each a share
+/// from none to full: what makes one sunrise unlike the next.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Air {
+    /// How clear the far sky toward the sun is, where its light comes in.
+    pub open: f32,
+    /// How much dust hangs in it, which reddens and deepens the fire.
+    pub dust: f32,
+    /// How damp it is, which softens the fire to rose.
+    pub damp: f32,
+    /// How lately rain washed it, which pales and shortens the fire.
+    pub washed: f32,
+}
 /// How much wider the leap season spreads its fronts: storms stand
 /// between clear skies, and the meteor shower shows through the gaps.
 const OMEN_SPREAD: f64 = 0.6;
@@ -86,6 +111,8 @@ pub struct Forecast {
     /// two independent fields keeps the spread of one.
     weights: (f64, f64),
     wetness: f64,
+    dust: f64,
+    damp: f64,
     omen: f64,
     morning: f64,
     /// One weather everywhere instead of the fronts, for looking at it.
@@ -115,6 +142,8 @@ impl Forecast {
             fronts,
             weights,
             wetness: lerp(SEASON_WETNESS[a], SEASON_WETNESS[b]),
+            dust: lerp(SEASON_DUST[a], SEASON_DUST[b]),
+            damp: lerp(SEASON_DAMP[a], SEASON_DAMP[b]),
             omen: lerp(f64::from(a == 4), f64::from(b == 4)),
             morning: morning(ms),
             steady: None,
@@ -132,18 +161,44 @@ impl Forecast {
         if let Some(weather) = self.steady {
             return weather;
         }
-        let field = |scale: f64, channel: u64| {
-            let [a, b] = self.fronts;
-            let read = |f: Front| fbm((x + f.shift.0) / scale, (z + f.shift.1) / scale, f.seed.wrapping_mul(2).wrapping_add(channel));
-            self.weights.0 * read(a) + self.weights.1 * read(b)
-        };
-        let wet = 0.5 + field(FRONT_SCALE_WU, 0) * (1.0 + OMEN_SPREAD * self.omen) + self.wetness;
-        let mist = 0.5 + field(MIST_SCALE_WU, 1);
+        let wet = 0.5 + self.field(x, z, FRONT_SCALE_WU, 0) * (1.0 + OMEN_SPREAD * self.omen) + self.wetness;
+        let mist = 0.5 + self.field(x, z, MIST_SCALE_WU, 1);
         Weather {
             cover: smoothstep(0.4, 0.78, wet) as f32,
             rain: smoothstep(0.74, 0.95, wet) as f32,
             mist: (self.morning * smoothstep(0.65, 0.85, mist)) as f32,
             storm: (self.omen * smoothstep(0.6, 0.85, wet)) as f32,
+        }
+    }
+
+    /// One of the fronts' fields at a place, about zero: the two periods'
+    /// own, blended. Channels 0 and 1 are a seed's two fields; a channel
+    /// past them reads a seed no period's own two reach.
+    fn field(&self, x: f64, z: f64, scale: f64, channel: u64) -> f64 {
+        let [a, b] = self.fronts;
+        let read = |f: Front| fbm((x + f.shift.0) / scale, (z + f.shift.1) / scale, f.seed.wrapping_mul(2).wrapping_add(channel));
+        self.weights.0 * read(a) + self.weights.1 * read(b)
+    }
+
+    /// The air a low sun's light comes through to `x`, `z` at moment
+    /// `ms`, the forecast's own, with the sun on the bearing `sunward`, a
+    /// unit vector in x and z. The same for every reader of one moment.
+    pub fn air(&self, ms: u128, x: f64, z: f64, sunward: (f64, f64)) -> Air {
+        let far = |times: f64| self.over(x + sunward.0 * SUNWARD_WU * times, z + sunward.1 * SUNWARD_WU * times).cover;
+        let open = 1.0 - smoothstep(0.25, 0.85, far(1.0).max(far(2.0)) as f64);
+        let (washed, damp, haze) = match self.steady {
+            Some(weather) => (0.0, weather.mist as f64, 0.0),
+            None => {
+                let rained = WASHED_MS.iter().map(|&ago| Self::at(ms.saturating_sub(ago)).over(x, z).rain).fold(0.0, f32::max);
+                // Past the two channels a period's seed holds, and the next's.
+                (smoothstep(0.0, 0.4, rained as f64), self.field(x, z, DUST_SCALE_WU, 1_001), self.field(x, z, DUST_SCALE_WU, 1_003))
+            }
+        };
+        Air {
+            open: open as f32,
+            dust: ((self.dust + 0.8 * haze).clamp(0.0, 1.0) * (1.0 - 0.6 * washed)) as f32,
+            damp: (self.damp + if self.steady.is_some() { damp } else { 0.8 * damp }).clamp(0.0, 1.0) as f32,
+            washed: washed as f32,
         }
     }
 
@@ -166,8 +221,7 @@ fn morning(ms: u128) -> f64 {
 /// The warmth turns once over the four seasons, warmest in the middle of
 /// Blaze; a leap season holds the cold the year turns at.
 pub fn snow_line(ms: u128) -> f32 {
-    let (start, _) = Date::year(ms);
-    let seasons = ((ms - start) as f64 / SEASON_MS as f64).min(4.0);
+    let seasons = 4.0 * Date::turned(ms);
     let warmth = (FRAC_PI_2 * (seasons - 1.5)).cos();
     (SNOW_LINE_MID + SNOW_LINE_SWING * warmth) as f32
 }
@@ -339,6 +393,7 @@ const FBM_GAIN: f64 = 0.5;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::systems::SEASON_MS;
 
     /// A Monday's midnight, the first of March 2026's five seasons.
     const MARCH: u128 = 1_772_409_600_000;
@@ -398,6 +453,29 @@ mod tests {
         assert!(strikes(&ordinary_sky, ordinary, ordinary + 600_000, 0.0, 0.0, 16_000.0).is_empty());
         assert!(meteors(&ordinary_sky, ordinary, ordinary + 600_000).is_empty());
         assert!(!meteors(&omen_sky, omen, omen + 600_000).is_empty());
+    }
+
+    /// A low sun's fire is shut out by cloud toward the sun and by none
+    /// behind; it is the moment's and the place's; and dust follows the
+    /// seasons, most in Ash.
+    #[test]
+    fn the_air_is_the_far_sky_and_the_season() {
+        let ms = MARCH + 2 * SEASON_MS + 3 * DAY_MS + 21 * HOUR_MS;
+        let forecast = Forecast::at(ms);
+        let (mut shut, mut open) = (0, 0);
+        for k in 0..400 {
+            let (x, z) = (k as f64 * 1_700.0, k as f64 * -900.0);
+            let air = forecast.air(ms, x, z, (-1.0, 0.0));
+            assert_eq!(air, forecast.air(ms, x, z, (-1.0, 0.0)));
+            assert!([air.open, air.dust, air.damp, air.washed].iter().all(|share| (0.0..=1.0).contains(share)), "{air:?}");
+            let far = forecast.over(x - SUNWARD_WU, z).cover.max(forecast.over(x - 2.0 * SUNWARD_WU, z).cover);
+            if far > 0.9 { shut += 1; assert!(air.open < 0.05, "{air:?}"); }
+            if far < 0.2 { open += 1; assert!(air.open > 0.95, "{air:?}"); }
+        }
+        assert!(shut > 0 && open > 0, "some shut, some open: {shut} {open}");
+        let clear = Weather::default();
+        let dust = |season: u128| Forecast::steady(MARCH + season * SEASON_MS + SEASON_MS / 2, clear, 0.0).air(0, 0.0, 0.0, (1.0, 0.0)).dust;
+        assert!(dust(2) > dust(1) && dust(1) > dust(3) && dust(3) > dust(0), "Ash, Blaze, Freeze, Thaw");
     }
 
     /// A strike falls where a storm stands: never under a clear sky.

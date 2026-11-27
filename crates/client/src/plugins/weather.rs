@@ -76,6 +76,10 @@ const FLASH_FALL_SECS: f32 = 0.35;
 pub struct SkyWeather {
     /// The weather over the camera, eased as it moves.
     pub here: Weather,
+    /// The sky this was read from, and where in the world the camera
+    /// stood, in x and z: for what the weather is further off.
+    pub forecast: Forecast,
+    pub at: (f64, f64),
     /// How much of the leap season holds, the same everywhere.
     pub omen: f32,
     /// How much the lightning lights the scene now.
@@ -111,6 +115,8 @@ impl FromWorld for SkyWeather {
         let map = world.resource_mut::<Assets<Image>>().add(image);
         Self {
             here: Weather::default(),
+            forecast: Forecast::steady(0, Weather::default(), 0.0),
+            at: (0.0, 0.0),
             omen: 0.0,
             flash: 0.0,
             bolts: [Vec4::ZERO; BOLTS],
@@ -407,6 +413,7 @@ fn read(
         *now += (to - *now) * ease;
     }
     weather.omen = forecast.omen();
+    (weather.forecast, weather.at) = (forecast, (x, z));
 
     // The map, about the camera's cell.
     let centre = ((x / MAP_CELL_WU).floor() as i64, (z / MAP_CELL_WU).floor() as i64);

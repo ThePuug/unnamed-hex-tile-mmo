@@ -61,7 +61,41 @@ impl Date {
         let end = first_monday(next.year(), next.month());
         (game_ms(start), game_ms(end) - game_ms(start))
     }
+
+    /// How far round the year has turned at `ms`, 0 to 1: once over the
+    /// four seasons, and held at the whole turn through a leap season, so
+    /// what turns with the year is the same in a season of any year.
+    pub fn turned(ms: u128) -> f64 {
+        let (start, _) = Self::year(ms);
+        ((ms - start) as f64 / (4 * SEASON_MS) as f64).min(1.0)
+    }
+
+    /// Where `ms` stands in a leap season's visit, in seasons since the
+    /// visitor took the world: from the season before, at −1, through the
+    /// season it holds it, 0 to 1, to the season after, to 2. None
+    /// outside those three. The visitor takes the world [`VISIT_FROM`]
+    /// into the leap season and lets it go that far into the next.
+    pub fn visitor(ms: u128) -> Option<f64> {
+        let (start, long) = Self::year(ms);
+        // Whole milliseconds since the visitor took the world, so a noon
+        // is a noon exactly.
+        let since = (ms - start) as i64 - VISIT_FROM as i64;
+        let season = SEASON_MS as i64;
+        let since = if long > 4 * SEASON_MS {
+            since - 4 * season
+        } else if start > 0 && Self::year(start - 1).1 > 4 * SEASON_MS {
+            since + season
+        } else {
+            return None;
+        };
+        (-season..2 * season).contains(&since).then_some(since as f64 / season as f64)
+    }
 }
+
+/// How far into a leap season the visitor takes the world: at noon on its
+/// first day, so that it is across the sun at a noon, half the season on,
+/// and the day about that noon is the dark one.
+pub const VISIT_FROM: u128 = DAY_MS / 2;
 
 impl std::fmt::Display for Date {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -279,6 +313,14 @@ mod tests {
         assert_eq!(april - march, 5 * SEASON_MS);
         assert_eq!(may - april, 4 * SEASON_MS);
         assert_eq!(Date::season_start(march + 3 * WEEK_MS + HOUR_MS), march);
+        assert_eq!((Date::turned(march + 2 * SEASON_MS), Date::turned(may + 2 * SEASON_MS)), (0.5, 0.5), "a season turns as far in a year of either length");
+        assert_eq!((Date::turned(march + 4 * SEASON_MS + DAY_MS), Date::turned(april)), (1., 0.), "held through the leap season");
+        let visit = |on: u128| Date::visitor(march + on);
+        assert_eq!((visit(0), visit(3 * SEASON_MS), visit(6 * SEASON_MS + VISIT_FROM), visit(9 * SEASON_MS - 1)), (None, None, None, None), "no visitor but about a leap season");
+        assert_eq!(visit(4 * SEASON_MS + VISIT_FROM), Some(0.), "it takes the world at noon on the leap season's first day");
+        assert_eq!(visit(4 * SEASON_MS + SEASON_MS / 2 + VISIT_FROM), Some(0.5), "and is across the sun at noon half the season on");
+        assert_eq!(visit(5 * SEASON_MS + VISIT_FROM), Some(1.), "and lets it go at noon on the next year's first day");
+        assert!(visit(3 * SEASON_MS + VISIT_FROM).is_some_and(|t| (t + 1.).abs() < 1e-9) && visit(6 * SEASON_MS).is_some_and(|t| t < 2.));
     }
 
     /// A running calendar keeps the wall clock, shifted where it was moved;
