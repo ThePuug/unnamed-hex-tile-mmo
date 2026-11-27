@@ -231,6 +231,12 @@ fn main() {
         world::follow_camera,
         // A rope's ends are joints the animation moved this frame
         crate::systems::rope::draw.after(bevy::transform::TransformSystems::Propagate),
+        // Bounds are lowered from where the camera now stands, once each
+        // mesh has its own and before the view is culled by them
+        crate::systems::curve::bound
+            .after(bevy::transform::TransformSystems::Propagate)
+            .after(bevy::camera::visibility::VisibilitySystems::CalculateBounds)
+            .before(bevy::camera::visibility::VisibilitySystems::CheckVisibility),
     ));
 
     app.insert_resource(crate::resources::world_map());

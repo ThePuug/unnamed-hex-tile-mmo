@@ -38,9 +38,10 @@ pub const BOLTS: usize = 4;
 pub const METEORS: usize = 3;
 
 /// The weather map: a square of cells about the camera, each the weather
-/// at its centre, out past where the cloud deck meets the reach.
+/// at its centre, out to where the cloud deck, bent with the world, meets
+/// the horizon of a camera a few hundred units over it.
 const MAP_CELLS: u32 = 64;
-const MAP_CELL_WU: f64 = 750.0;
+const MAP_CELL_WU: f64 = 1500.0;
 /// How often the map is read again while the camera stays in its cell.
 /// The fronts change over a period of hours of game time; this is only
 /// how smoothly the change shows.
@@ -462,7 +463,7 @@ fn read(
         let toward = Vec2::new((strike.x - x) as f32, (strike.z - z) as f32);
         let distance = toward.length().max(1.0);
         flash += light / (1.0 + (distance / FLASH_REACH_WU).powi(2));
-        let haze = (-crate::systems::camera::haze_density() * distance).exp();
+        let haze = (-crate::systems::world::HAZE_DENSITY * distance).exp();
         bolts.push((
             (toward / distance).extend(DECK_HEIGHT.atan2(distance)).extend(light * (0.3 + 0.7 * haze)),
             Vec4::new((strike.seed % 1024) as f32, BOLT_WIDTH_WU / distance, 0.0, 0.0),

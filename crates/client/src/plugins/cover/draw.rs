@@ -925,10 +925,17 @@ fn prepare_stand_draws(
             .clip_from_world
             .unwrap_or_else(|| view.clip_from_view * view.world_from_view.to_matrix().inverse());
         let frustum = Frustum(ViewFrustum::from_clip_from_world(&clip_from_world));
+        // A light's view is orthographic and sees the flat world.
+        let eye = (view.clip_from_view.w_axis.w != 1.0).then(|| view.world_from_view.translation());
         let seen: Vec<bool> = table
             .bounds
             .iter()
-            .map(|b| b.as_ref().is_some_and(|(frame, bounds)| frustum.intersects_obb(bounds, frame, true, true)))
+            .map(|b| {
+                b.as_ref().is_some_and(|(frame, bounds)| {
+                    let bounds = eye.map_or(*bounds, |eye| crate::systems::curve::lowered(bounds, frame, eye));
+                    frustum.intersects_obb(&bounds, frame, true, true)
+                })
+            })
             .collect();
         for (entity, ranges, index_count, first_index, base_vertex) in &stand_meshes {
             let start = draws.args.len() as u32;

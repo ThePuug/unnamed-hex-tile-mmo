@@ -61,9 +61,8 @@ pub struct SkyMaterial {
     #[uniform(0)]
     pub haze: LinearRgba,
     /// In `x`, how far out the stars are; in `y`, the share of the sun
-    /// the visitor covers; in `z`, the sine of elevation the haze clears
-    /// at; in `w`, how far the air about the camera hides the stars low
-    /// down.
+    /// the visitor covers; in `z`, how thick the weather's haze is, none
+    /// in clear air.
     #[uniform(0)]
     pub night: Vec4,
     /// The columns of what takes a direction in the world to its place
@@ -127,9 +126,7 @@ pub enum Disc { Sun, Moon }
 /// lit from `sun` in the disc's own frame, +z toward the camera, so the
 /// moon's phase shows with its lit limb toward the sun and the sun is
 /// full; the rest is the sky. The body's `face`, if it has one, is shown
-/// once and whole, inscribed. Under the horizontal through the eye there is
-/// no disc, so it sets into the sea instead of showing through it. Shaded by
-/// `shaders/disc.wesl`.
+/// once and whole, inscribed. Shaded by `shaders/disc.wesl`.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct DiscMaterial {
     #[uniform(0)]
@@ -285,9 +282,13 @@ const CLOUD_AMBIENT: f32 = 0.6;
 const RAIN_GLOOM: f32 = 0.3;
 const STORM_GLOOM: f32 = 0.3;
 const CLOUD_GREY: f32 = 0.7;
-/// How far the haze closes in under full mist, rain and storm, as a share
-/// of every distance the clear day's haze reaches: mist to a few hundred
-/// units.
+/// The weather's haze, per world unit, at a visibility of one half: a
+/// surface `d` off keeps `exp(-density·d)` of its own colour and the haze
+/// has the rest, and the density is this by `1/visibility − 1`, none in
+/// clear air.
+pub const HAZE_DENSITY: f32 = 2.6e-4;
+/// The visibility under full mist, rain and storm: mist leaves a
+/// hundredth of a surface some five hundred units off.
 const MIST_VISIBILITY: f32 = 0.03;
 const RAIN_VISIBILITY: f32 = 0.4;
 const STORM_VISIBILITY: f32 = 0.7;
@@ -412,12 +413,6 @@ const HALO: f32 = 0.5;
 /// The share of it left as the sun stands on the horizon, where its direct
 /// light is spent, and how far under the sun is when the last of it goes.
 const HALO_LOW: f32 = 0.8;
-/// How high the haze stands on the sky, as sines of elevation: through
-/// clear air, and through the thickest, which is mist, rain, a storm or
-/// `HAZE_DUST` of the air's dust.
-const HAZE_TOP_CLEAR: f32 = 0.14;
-const HAZE_TOP_THICK: f32 = 0.25;
-const HAZE_DUST: f32 = 0.6;
 const HALO_UNDER: f32 = 3_f32.to_radians();
 /// The clear sky on a moonless night: never black, so the stars stand on
 /// a deep blue.
@@ -498,7 +493,7 @@ pub fn setup(
             rose: LinearRgba::BLACK,
             halo: LinearRgba::BLACK,
             haze: LinearRgba::BLACK,
-            night: Vec4::new(0., 0., HAZE_TOP_CLEAR, 0.),
+            night: Vec4::ZERO,
             turn_east: Vec4::X,
             turn_up: Vec4::Y,
             turn_south: Vec4::Z,
@@ -755,7 +750,9 @@ pub fn update(
     let visibility = (1. - (1. - MIST_VISIBILITY) * here.mist)
         * (1. - (1. - RAIN_VISIBILITY) * here.rain)
         * (1. - (1. - STORM_VISIBILITY) * here.storm);
-    fog.falloff = FogFalloff::Exponential { density: crate::systems::camera::haze_density() / visibility };
+    // The clear day has no haze: the weather's alone closes in.
+    let density = HAZE_DENSITY * (1. / visibility - 1.);
+    fog.falloff = FogFalloff::Exponential { density };
     // The fire of the crossing: lit by what light is left, dimmed by the
     // weather, and made of the air its light comes through; the stars
     // come out as it dies, less under a bright moon.
@@ -784,8 +781,7 @@ pub fn update(
         sky.rose = LinearRgba::from_vec3(rose);
         sky.halo = LinearRgba::from_vec3(s_glow * HALO * s_glare * (ECLIPSE_HALO + (1. - ECLIPSE_HALO) * open) * gloom * (1. - 0.6 * cover));
         sky.haze = haze;
-        let thick = (1. - visibility).max(HAZE_DUST * air.dust);
-        sky.night = Vec4::new(stars, 1. - open, HAZE_TOP_CLEAR + (HAZE_TOP_THICK - HAZE_TOP_CLEAR) * thick, 1. - visibility);
+        sky.night = Vec4::new(stars, 1. - open, 1. - visibility, 0.);
         sky.visitor = v_toward.extend(2. * sin(v_wide / 4.));
         sky.moon = m_toward.extend(2. * sin(MOON_ANGULAR_DIAMETER / 4.));
         (sky.turn_east, sky.turn_up, sky.turn_south) = (sphere.x_axis.extend(0.), sphere.y_axis.extend(0.), sphere.z_axis.extend(0.));
@@ -807,7 +803,7 @@ pub fn update(
         clouds.lining = LinearRgba::from_vec3(GILT.lerp(Vec3::splat(HEM_BY_DAY), s_direct)).with_alpha(reaching);
         clouds.bearing = bearing;
         clouds.dawn = Vec4::new(caught_from(s_elevation), (1.5 * burning).min(1.), s_direct * open, burning.max(RAYS_BY_DAY * s_direct * open));
-        clouds.deck = Vec4::new(DECK_HEIGHT, crate::systems::camera::haze_density() / visibility, weather.flash, OMEN_PALL * pall);
+        clouds.deck = Vec4::new(DECK_HEIGHT, density, weather.flash, OMEN_PALL * pall);
         clouds.frame = weather.frame;
         clouds.drift = weather.drift.extend(0.).extend(0.);
         clouds.veil = LinearRgba { alpha: (MIST_VEIL * here.mist + RAIN_VEIL * here.rain).min(1.), ..haze };
@@ -819,8 +815,7 @@ pub fn update(
     }
 
     // Each disc faces the camera from its body's direction, in its light's
-    // colour; the ground occludes it as it sets and its shader cuts it at
-    // the horizontal.
+    // colour; the ground occludes it as it sets.
     let camera = camera.translation();
     for (disc, mut transform, material) in &mut q_discs {
         let toward = match disc { Disc::Sun => s_toward, Disc::Moon => m_toward };

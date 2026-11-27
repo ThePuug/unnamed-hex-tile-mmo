@@ -100,31 +100,18 @@ const CLOSE_TILT_RINGS_WU: [f32; 2] = [2.0 * TILE_ACROSS_WU, 3.0 * TILE_ACROSS_W
 /// A tile's width flat to flat.
 const TILE_ACROSS_WU: f32 = 1.732_050_8 * common::grid::HEX_RADIUS;
 
-/// The haze at noon: one colour that distance fades everything toward, and
-/// the sky at the horizon, so the frontier at the reach never shows.
-/// `world::update` lights both by the sun and moon through the day, the
-/// sky in the sun's tint and the haze in a share of it.
+/// The haze at noon: the one colour the weather's air fades everything
+/// toward, and the sky at the horizon under it. `world::update` lights
+/// both by the sun and moon through the day, the sky in the sun's tint
+/// and the haze in a share of it.
 pub const HAZE_COLOR: Color = Color::linear_rgb(0.50, 0.66, 0.90);
-/// The share of a surface's own colour the clear day's haze leaves at the
-/// reach: under one step of an 8-bit channel where the land differs most
-/// from the haze, so the frontier, where the drawn world ends, never shows.
-const HAZE_LEFT_AT_REACH: f32 = 0.01;
-
-/// The clear day's haze density, per world unit: a surface `d` off keeps
-/// `exp(-density·d)` of its own colour, and the haze has the rest.
-pub fn haze_density() -> f32 {
-    -HAZE_LEFT_AT_REACH.ln() / common_bevy::summary::reach_wu()
-}
-
-/// Distance fog to the haze, for the camera: deepening steadily with the
-/// distance and all but complete at the reach, so each hill further off
-/// stands paler and bluer than the one before it. As the square of the
-/// distance it would lay almost nothing on a hill two thousand units off,
-/// and the whole view short of the reach would stand in clear air.
+/// Distance fog to the haze, for the camera: none in clear air, where
+/// the world's curve ends the land, and as thick as the weather makes it
+/// (`world::update`).
 fn haze() -> DistanceFog {
     DistanceFog {
         color: HAZE_COLOR,
-        falloff: FogFalloff::Exponential { density: haze_density() },
+        falloff: FogFalloff::Exponential { density: 0.0 },
         ..default()
     }
 }

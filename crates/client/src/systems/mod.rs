@@ -12,6 +12,7 @@ pub mod skill_text;
 pub mod skills_panel;
 pub mod closeup;
 pub mod combat;
+pub mod curve;
 pub mod combat_log; // Combat log panel for event history
 pub mod combat_ui;
 pub mod compass;
