@@ -1758,21 +1758,19 @@ const SURVEYED: i32 = 12;
 /// Tells hub `id` how its ground lies, out to [`SURVEYED`] past it
 /// (`Hubs::survey`): nothing is planned on a tile that holds a tree, a
 /// stump, a boulder, reeds, a player's blockade or water, nor on both of
-/// two tiles side by side whose levels a walker does not step between,
-/// and its wall's way in is placed by the level of each tile looked at.
-/// A tile the map does not hold yet is none of them. Looked at anew before
+/// two tiles side by side whose levels a walker does not step between.
+/// A tile the map does not hold yet is neither. Looked at anew before
 /// anything is planned, since trees are felled and blockades built.
 pub(crate) fn survey(site: &mut Site, id: common_bevy::hubs::HubId) {
     use common::cover::Content;
     use std::collections::BTreeSet;
     let (Some(hearth), Some(ground)) = (site.hubs.hearth(id), site.hubs.ground(id)) else { return };
     let reach = ground.tiles.iter().map(|&tile| qrz::hex_distance(tile, hearth)).max().unwrap_or(0) + SURVEYED;
-    let (mut barred, mut cliffs, mut levels) = (BTreeSet::new(), BTreeSet::new(), Vec::new());
+    let (mut barred, mut cliffs) = (BTreeSet::new(), BTreeSet::new());
     for q in -reach..=reach {
         for r in (-reach).max(-q - reach)..=reach.min(-q + reach) {
             let tile = (hearth.0 + q, hearth.1 + r);
             let Some((z, cover)) = site.ground.lies(tile.0, tile.1) else { continue };
-            levels.push((tile, z));
             let grown = (0..common::TILE_SLOTS as usize).any(|k| matches!(cover.content(k), Content::Pine | Content::Deciduous | Content::PineStump | Content::DeciduousStump | Content::Boulder | Content::Reed));
             let blocked = building::standing(cover).is_some_and(|construct| construct.kind == Kind::Blockade);
             if grown || blocked || site.ground.map().water_at(tile.0, tile.1).is_some() {
@@ -1787,12 +1785,12 @@ pub(crate) fn survey(site: &mut Site, id: common_bevy::hubs::HubId) {
             }
         }
     }
-    site.hubs.survey(id, barred, cliffs, levels);
+    site.hubs.survey(id, barred, cliffs);
 }
 
 /// Answers each player that asks for the hub it stands in as its
 /// planning shows it.
-pub fn try_layout(mut reader: MessageReader<Try>, mut site: Site, camps: Res<Camps>, time: Res<Time>, runtime: Res<combat::RunTime>, players: Query<&Loc>) {
+pub fn try_layout(mut reader: MessageReader<Try>, mut site: Site, camps: Res<Camps>, players: Query<&Loc>) {
     for message in reader.read() {
         let Try { event: Event::Layout { ent, .. } } = message else { continue };
         let Ok(loc) = players.get(*ent) else {
