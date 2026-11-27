@@ -109,7 +109,7 @@ pub fn threshold_horiz(r: u32) -> f32 {
 }
 
 /// The reach: the ground distance the world is drawn to, where the ladder
-/// ends, about one plate. Producers on both sides cover to it and the haze
+/// ends, about three plates. Producers on both sides cover to it and the haze
 /// completes inside it. A fixed distance, not a camera angle, so what the
 /// camera can see is bounded by the ladder alone and nothing nearer hides
 /// behind an early haze.

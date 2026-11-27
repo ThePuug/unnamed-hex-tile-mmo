@@ -26,7 +26,7 @@ pub trait SummarySource {
 
     /// The summary at `(sq, sr)` on the lattice of radius `r`, where the
     /// source holds the summary's own cell rather than its tiles, as the
-    /// terrain ladder does at 3, 9, 27 and 81 wide: its height, and which of
+    /// terrain ladder does at 3, 9, 27, 81 and 243 wide: its height, and which of
     /// its parts stand under water above the sea, a bit to each, as
     /// [`wet_parts`] marks them. Where water stands over the cell its height
     /// is a step under the water's surface, as [`summarize`] stands a wet
@@ -70,13 +70,14 @@ impl SummaryCell {
 
 /// Nested LoD levels: summary scales triple per level.
 ///
-/// scale = 2r+1 ∈ {1, 3, 9, 27, 81}. Tripling makes the levels nest:
+/// scale = 2r+1 ∈ {1, 3, 9, 27, 81, 243}. Tripling makes the levels nest:
 /// every coarse summary center is also a fine summary center, and
 /// [`sample_offsets`]' 7 sample points at d = scale/3 land exactly on the
 /// child level's summary centers (INV-006). Arbitrary integer radii do not
 /// nest — adjacent-band lattices would share no structure at all. The
-/// ladder ends where its outer edge reaches about one plate.
-pub const LOD_LEVELS: [u32; 5] = [0, 1, 4, 13, 40];
+/// ladder ends where its outer edge reaches about three plates, half a
+/// continent: its last band is the skyline.
+pub const LOD_LEVELS: [u32; 6] = [0, 1, 4, 13, 40, 121];
 
 /// The width of a summary of radius `r`, in tiles: the step of its lattice.
 pub fn scale(r: u32) -> i32 {
