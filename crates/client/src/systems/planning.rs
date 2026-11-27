@@ -53,6 +53,9 @@ const STEPS: [(KeyCode, (i32, i32)); 4] = [
 /// and say they are one, so one laid centred stands half a cell right.
 const GLYPH_NUDGE: f32 = -4.0;
 
+/// How large the sign of a hub asleep is drawn, in px.
+const SLEEP_SIZE: f32 = 120.0;
+
 /// The colour the way in through the wall is drawn in.
 const GATE: [f32; 3] = [0.95, 0.92, 0.70];
 
@@ -542,6 +545,15 @@ pub fn update(mut commands: Commands, planning: Res<Planning>, mut rows: Query<(
             let pane = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(5.), width: Val::Px(320.), padding: UiRect::all(Val::Px(10.)), border_radius: BorderRadius::all(Val::Px(4.)), ..default() };
             panel.spawn((pane, BackgroundColor(PANE))).with_children(|side| {
                 let line = Node { align_items: AlignItems::Center, column_gap: Val::Px(8.), min_height: Val::Px(24.), ..default() };
+                // By night no one takes anything: the pane is the one sign of it, and the key that shuts the plan
+                if layout.asleep {
+                    side.spawn(Node { flex_grow: 1.0, justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() }).with_children(|night| drop(night.spawn((sign(ASLEEP.to_owned(), SLEEP_SIZE, 0.55), Node { left: Val::Px(GLYPH_NUDGE * SLEEP_SIZE / 15.0), ..default() }))));
+                    side.spawn(line).with_children(|keys| {
+                        crate::systems::keycap::keycap(keys, crate::cap!(KEYCODE_CLOSE));
+                        keys.spawn(sign("Close".to_owned(), 15.0, 0.8));
+                    });
+                    return;
+                }
                 // What lies under the cursor: the thing, pictured, and who lives in it; or the ground's zone
                 side.spawn(line.clone()).with_children(|under| {
                     under.spawn(sign(CURSOR.to_owned(), 15.0, 0.9));
@@ -571,9 +583,7 @@ pub fn update(mut commands: Commands, planning: Res<Planning>, mut rows: Query<(
                 side.spawn(line.clone()).with_children(|named| {
                     if let Some(zone) = planning.planner {
                         named.spawn(sign(zone_name(zone).to_owned(), 15.0, 0.95));
-                        if layout.asleep {
-                            named.spawn(sign(ASLEEP.to_owned(), 15.0, 0.9));
-                        } else if layout.away & 1 << zone != 0 {
+                        if layout.away & 1 << zone != 0 {
                             named.spawn(sign(AWAY.to_owned(), 15.0, 0.9));
                         } else if layout.busy & 1 << zone != 0 {
                             named.spawn(sign(WAITS.to_owned(), 15.0, 0.9));
@@ -611,7 +621,7 @@ pub fn update(mut commands: Commands, planning: Res<Planning>, mut rows: Query<(
                             }
                         }
                         if absent {
-                            cell.spawn(sign(if layout.asleep { ASLEEP } else { AWAY }.to_owned(), 15.0, 0.7));
+                            cell.spawn(sign(AWAY.to_owned(), 15.0, 0.7));
                         } else if aimless {
                             cell.spawn(sign(BARRED.to_owned(), 15.0, 0.7));
                         } else if *waits {
@@ -671,15 +681,15 @@ pub fn update(mut commands: Commands, planning: Res<Planning>, mut rows: Query<(
 }
 
 /// The signs the panel says things by, from the glyph font: people, a
-/// wall, yes and no, the cursor, what waits on work, a moon for a planner
-/// asleep and a road for one off the hub, what cannot be, what a plan
+/// wall, yes and no, the cursor, what waits on work, sleep for a hub
+/// by night and a road for a planner off it, what cannot be, what a plan
 /// adds and removes, and what the keys do.
 const PEOPLE: &str = "\u{f0c0}";
 const WALL: &str = "\u{f132}";
 const NO: &str = "\u{f00d}";
 const CURSOR: &str = "\u{f05b}";
 const WAITS: &str = "\u{f252}";
-const ASLEEP: &str = "\u{f186}";
+const ASLEEP: &str = "\u{f04b2}";
 const AWAY: &str = "\u{f018}";
 const BARRED: &str = "\u{f05e}";
 const ADDS: &str = "\u{f067}";
