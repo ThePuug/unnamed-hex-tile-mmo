@@ -281,13 +281,13 @@ pub fn strikes(forecast: &Forecast, from: u128, to: u128, x: f64, z: f64, radius
 const STRIKE_SEED: u64 = 0x6c69_6768_746e;
 
 /// A meteor: when it lights, how long it burns, and its arc across the
-/// sky: the direction it rises at on the horizon, the pole of the great
-/// circle it runs on, and how far round it runs.
+/// sky: the direction it lights at, which may lie under the horizon, the
+/// pole of the great circle it runs on, and how far round it runs.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Meteor {
     pub at: u128,
     pub burns_ms: u128,
-    pub rises: Vec3,
+    pub lights: Vec3,
     pub pole: Vec3,
     pub span: f32,
 }
@@ -296,7 +296,7 @@ impl Meteor {
     /// Where it stands after `share` of its run.
     pub fn along(&self, share: f32) -> Vec3 {
         let angle = self.span * share;
-        self.rises * angle.cos() + self.pole.cross(self.rises) * angle.sin()
+        self.lights * angle.cos() + self.pole.cross(self.lights) * angle.sin()
     }
 }
 
@@ -305,15 +305,19 @@ pub const METEOR_SLOT_MS: u128 = 1_000;
 const METEOR_CHANCE: f64 = 1.0 / 60.0;
 /// The longest a fireball burns: a reader looking for the ones alight
 /// looks this far back.
-pub const METEOR_BURNS_MOST_MS: u128 = 6_000;
+pub const METEOR_BURNS_MOST_MS: u128 = 7_000;
 
 /// Every meteor lit from `from` to `to` in `forecast`'s leap season: a
-/// fireball arcing across the sky, rising from the horizon, climbing a
-/// quarter of its way round to its top, and going down toward the far
-/// horizon or burning out before it. It is in the sky, as the sun is, so
-/// every player sees the one arc wherever they stand, and an arc that long
-/// crosses the low sky the camera sees whichever way it faces. Day or
-/// night. A held calendar holds them where they burn.
+/// fireball on a great circle that rises over the horizon, climbs a
+/// quarter of the way round to its top and sets on the far side. It
+/// lights under the horizon and comes up over it burning, or lights in
+/// the sky; it burns out in the sky, or goes down past the far horizon
+/// still alight; now and then one does both and crosses the whole sky.
+/// The ground hides what is under the horizon. It is in the sky, as the
+/// sun is, so every player sees the one arc wherever they stand, and
+/// every arc runs long enough in the sky to cross the low sky the camera
+/// sees whichever way it faces. Day or night. A held calendar holds them
+/// where they burn.
 pub fn meteors(forecast: &Forecast, from: u128, to: u128) -> Vec<Meteor> {
     let mut found = Vec::new();
     for slot in from / METEOR_SLOT_MS..=to / METEOR_SLOT_MS {
@@ -330,12 +334,25 @@ pub fn meteors(forecast: &Forecast, from: u128, to: u128) -> Vec<Meteor> {
         let turn = if draw(6) < 0.5 { -FRAC_PI_2 } else { FRAC_PI_2 };
         let rises = direction(bearing, 0.0);
         let top = direction(bearing + turn, (20.0 + 30.0 * draw(3)).to_radians());
+        let pole = rises.cross(top).normalize();
+        // Where it lights and where it is out, in degrees round the
+        // circle from where that rises: under 0 and past 180 are under
+        // the horizon.
+        let (near, far) = (draw(8), draw(2));
+        let (lights, out) = match draw(7) {
+            kind if kind < 0.3 => (-2.0 - 13.0 * near, 80.0 + 80.0 * far),
+            kind if kind < 0.6 => (5.0 + 45.0 * near, 85.0 + 45.0 * near + 30.0 * far),
+            kind if kind < 0.9 => (20.0 + 80.0 * near, 182.0 + 13.0 * far),
+            _ => (-2.0 - 10.0 * near, 182.0 + 10.0 * far),
+        };
+        let from = (lights as f32).to_radians();
         found.push(Meteor {
             at,
-            burns_ms: 3_000 + (draw(5) * (METEOR_BURNS_MOST_MS - 3_000) as f64) as u128,
-            rises,
-            pole: rises.cross(top).normalize(),
-            span: (130.0 + 50.0 * draw(2) as f32).to_radians(),
+            // Thirty to forty degrees a second, however far it runs.
+            burns_ms: ((out - lights) / (30.0 + 10.0 * draw(5)) * 1_000.0) as u128,
+            lights: rises * from.cos() + pole.cross(rises) * from.sin(),
+            pole,
+            span: ((out - lights) as f32).to_radians(),
         });
     }
     found
@@ -495,27 +512,28 @@ mod tests {
         assert!(struck > 0, "the leap season's storms strike");
     }
 
-    /// Every fireball rises from the horizon, climbs to its top a quarter
-    /// of the way round and stays in the sky the whole of its run, burning
-    /// no longer than a reader looks back for; they rise on every side.
+    /// Every fireball runs on a great circle, most of its run in the sky
+    /// and climbing high there, burning no longer than a reader looks
+    /// back for. Some light under the horizon and some in the sky, some
+    /// burn out in the sky and some go down past the horizon, in every
+    /// pairing; they cross on every side.
     #[test]
     fn fireballs_arc_across_the_sky_on_every_side() {
         let omen = MARCH + 4 * SEASON_MS + DAY_MS;
         let seen = meteors(&Forecast::at(omen), omen, omen + 180 * 60_000);
         assert!(seen.len() > 50);
+        let mut kinds = std::collections::HashSet::new();
         for m in &seen {
-            assert!(m.rises.y.abs() < 1e-6, "it rises from the horizon");
-            assert!(m.pole.dot(m.rises).abs() < 1e-5, "on a great circle through it");
-            let top = m.along(std::f32::consts::FRAC_PI_2 / m.span);
-            assert!(top.y > 20_f32.to_radians().sin() - 1e-4, "climbing high");
-            for k in 0..=20 {
-                assert!(m.along(k as f32 / 20.0).y > -1e-4, "and staying in the sky");
-            }
-            assert!(m.rises.dot(m.along(1.0)) < -0.6, "across most of the sky");
-            assert!(m.burns_ms <= METEOR_BURNS_MOST_MS);
+            assert!(m.pole.dot(m.lights).abs() < 1e-5, "on a great circle through where it lights");
+            let run: Vec<f32> = (0..=40).map(|k| m.along(k as f32 / 40.0).y).collect();
+            assert!(run.iter().filter(|&&y| y > 0.0).count() > run.len() / 2, "most of its run in the sky");
+            assert!(run.iter().any(|&y| y > 0.3), "climbing high");
+            assert!(m.burns_ms > 0 && m.burns_ms <= METEOR_BURNS_MOST_MS);
+            kinds.insert((m.lights.y < 0.0, m.along(1.0).y < 0.0));
         }
+        assert_eq!(kinds.len(), 4, "lit under the horizon or in the sky, out in the sky or past the horizon");
         for (x, z) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
-            assert!(seen.iter().any(|m| m.rises.x * x + m.rises.z * z > 0.7), "fireballs rise toward ({x}, {z})");
+            assert!(seen.iter().any(|m| { let mid = m.along(0.5); mid.x * x + mid.z * z > 0.5 }), "fireballs cross toward ({x}, {z})");
         }
     }
 

@@ -35,8 +35,8 @@ const MOON_ILLUMINANCE: f32 = EARTH_MOON_LUX
 /// plane, one colour everywhere but toward the sun, where a glow of the
 /// sun's tint sits low under its bearing, and the haze at the horizon,
 /// behind the frontier where the drawn world ends. Shaded by
-/// `shaders/sky.wesl`. The clouds, and the leap season's fireballs in front
-/// of them, are a deck of their own in front of the discs
+/// `shaders/sky.wesl`. The clouds, and the leap season's fireballs above
+/// them, are a deck of their own in front of the discs
 /// (`plugins::weather::CloudDeck`).
 #[derive(Component)]
 pub struct SkyDome;

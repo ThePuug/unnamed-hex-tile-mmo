@@ -494,7 +494,9 @@ fn read(
         let bright = blazing(burnt);
         weather.meteor_tails[n] = meteor.along(trailing).extend(bright);
         weather.meteor_paths[n] = meteor.pole.extend(meteor.span * (burnt - trailing));
-        weather.blaze += BLAZE_COLOR * bright;
+        // Its light on the world goes as its head goes under the horizon.
+        let up = ((meteor.along(burnt).y + 0.1) / 0.15).clamp(0.0, 1.0);
+        weather.blaze += BLAZE_COLOR * bright * up;
     }
 }
 
