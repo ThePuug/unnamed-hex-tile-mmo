@@ -219,10 +219,12 @@ pub fn dispatch_summary_tasks(
             task_queue.waiting.insert(rk, vec![*ent]);
             // Changes kept under the region arrive after the task sets out
             // and move its summaries as any change does.
-            let (min, max) = reach(&rk);
-            changes.seek(min, max);
+            let laid = takes_changes(rk.r).then(|| {
+                let (min, max) = reach(&rk);
+                changes.seek(min, max);
+                changes.over(registry.clone())
+            });
             let generated = registry.clone();
-            let laid = changes.over(registry.clone());
             let task = AsyncComputeTaskPool::get().spawn(async move {
                 let start = std::time::Instant::now();
                 let rl = mesh_region_lattice();
@@ -242,7 +244,13 @@ pub fn dispatch_summary_tasks(
                     .collect();
                 generated.warm_level(part, &parts);
                 let data: Vec<SummaryData> = rl.tiles_in_cell((rk.mn, rk.mm))
-                    .map(|(sq, sr)| SummaryData { r: rk.r, sq, sr, cell: generate(rk.r, sq, sr, &generated, &laid) })
+                    .map(|(sq, sr)| {
+                        let cell = match &laid {
+                            Some(laid) => generate(rk.r, sq, sr, &generated, laid),
+                            None => generate(rk.r, sq, sr, &generated, &generated),
+                        };
+                        SummaryData { r: rk.r, sq, sr, cell }
+                    })
                     .collect();
                 (data, start.elapsed().as_secs_f64() as f32 * 1000.0)
             });
@@ -296,6 +304,15 @@ pub fn poll_summary_tasks(
     task_queue.tasks = pending;
 }
 
+/// Whether summaries of radius `level` show what players changed: every
+/// level but the last, which is the world as generated. A part of the
+/// last is thousands of tiles no player has stood near, too many to count
+/// on a frame and more than a clearing moves, and its reach would recall
+/// every change kept for plates around.
+fn takes_changes(level: u32) -> bool {
+    level != *LOD_LEVELS.last().expect("the ladder has a level")
+}
+
 /// The summary at `(sq, sr)` on the lattice of radius `r`: its canopy from
 /// the world as `generated`, which a change then moves through the part's
 /// stats and so never counts twice; the rest from the world as `laid`,
@@ -307,7 +324,7 @@ fn generate(r: u32, sq: i32, sr: i32, generated: &impl SummarySource, laid: &imp
 }
 
 /// Take every change players made into the summaries. The part holding the
-/// changed tile moves at every level by what the change took or left, a
+/// changed tile moves at every level that [`takes_changes`] by what the change took or left, a
 /// summary never computed being computed first and a part never changed
 /// counted first from its tiles as generated, which are built around the
 /// player; so no change is missed and none counted twice. Each summary
@@ -328,7 +345,7 @@ pub fn revise_summaries(
     let laid = changes.over(registry.clone());
     let mut moved: HashSet<SummaryKey> = HashSet::new();
     for change in &fresh {
-        for (level, sq, sr, part) in ladder(change.q, change.r) {
+        for (level, sq, sr, part) in ladder(change.q, change.r).into_iter().filter(|&(level, ..)| takes_changes(level)) {
             let key = SummaryKey { r: level, sq, sr };
             let (cell, stats) = summary_cache.touch(key, || generate(level, sq, sr, &generated, &laid));
             let count = || {
@@ -343,7 +360,7 @@ pub fn revise_summaries(
                 moved.insert(key);
             }
         }
-        for &level in &LOD_LEVELS[1..] {
+        for &level in LOD_LEVELS[1..].iter().filter(|&&level| takes_changes(level)) {
             let Some((sq, sr)) = sampled_by(level, change.q, change.r) else { continue };
             let key = SummaryKey { r: level, sq, sr };
             let Some(cell) = summary_cache.get_mut(&key) else { continue };

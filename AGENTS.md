@@ -204,7 +204,9 @@ builds a tile for the map or the wire takes it through `laid_over`:
 `server::systems::gathering::WorldChanges` in `actor::merge_and_pack`,
 `client::systems::gathering::CoverChanges` in `world::do_spawn`. A
 summary reads its samples through `WorldChanges::over`, in
-`summary::dispatch_summary_tasks` and `summary::revise_summaries`. Where
+`summary::dispatch_summary_tasks` and `summary::revise_summaries`, but
+at the last level, which is the world as generated
+(`summary::takes_changes`). Where
 changes are kept, a chunk is built only once `WorldChanges::holds` it,
 its kept changes recalled. A path that skips either serves the tree a
 player felled.
