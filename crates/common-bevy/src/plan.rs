@@ -18,7 +18,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::OnceLock;
 
-use qrz::outline::{apart, enclosed, flat, girth, Point};
+use qrz::outline::{apart, around, corners, enclosed, flat, girth, Point};
 
 /// A tile, as `(q, r)`.
 pub type Tile = (i32, i32);
@@ -327,6 +327,73 @@ fn tile_at((x, y): Point) -> Tile {
     (q as i32, r as i32)
 }
 
+/// The steps from a tile to every tile nearer it than [`SPACE`].
+fn close() -> &'static [Tile] {
+    static CLOSE: OnceLock<Vec<Tile>> = OnceLock::new();
+    CLOSE.get_or_init(|| {
+        let reach = SPACE.ceil() as i32;
+        (-reach..=reach).flat_map(|q| (-reach..=reach).map(move |r| (q, r))).filter(|&step| apart(flat(step), (0.0, 0.0)) < SPACE - EPS).collect()
+    })
+}
+
+/// How much longer the outline with `corners` is drawn round `tiles` too,
+/// `edge` its length now.
+fn longer(corners: &[Point], edge: f64, tiles: &[Tile]) -> f64 {
+    around(&corners.iter().copied().chain(tiles.iter().map(|&tile| flat(tile))).collect::<Vec<_>>()) - edge
+}
+
+/// What each tile of a hub's ground is to a walk from its hearth, the
+/// tiles looked up by their place in the box round the ground.
+struct Field {
+    low: Tile,
+    wide: i32,
+    tiles: Vec<u32>,
+}
+
+impl Field {
+    /// Off the ground, on it, and built on: any other is how many steps
+    /// the walk took to the tile.
+    const OFF: u32 = u32::MAX;
+    const ON: u32 = u32::MAX - 1;
+    const BUILT: u32 = u32::MAX - 2;
+
+    /// `ground` in `q` then `r` order, every tile of it on.
+    fn of(ground: &[Tile]) -> Field {
+        let low = (ground.first().map_or(0, |tile| tile.0), ground.iter().map(|tile| tile.1).min().unwrap_or(0));
+        let high = (ground.last().map_or(0, |tile| tile.0), ground.iter().map(|tile| tile.1).max().unwrap_or(0));
+        let wide = high.1 - low.1 + 1;
+        let mut field = Field { low, wide, tiles: vec![Field::OFF; ((high.0 - low.0 + 1) * wide) as usize] };
+        for &tile in ground {
+            field.set(tile, Field::ON);
+        }
+        field
+    }
+
+    fn place(&self, (q, r): Tile) -> Option<usize> {
+        let (a, b) = (q - self.low.0, r - self.low.1);
+        (a >= 0 && b >= 0 && b < self.wide).then(|| (a * self.wide + b) as usize).filter(|&at| at < self.tiles.len())
+    }
+
+    fn at(&self, tile: Tile) -> u32 {
+        self.place(tile).map_or(Field::OFF, |at| self.tiles[at])
+    }
+
+    fn set(&mut self, tile: Tile, to: u32) {
+        if let Some(at) = self.place(tile) {
+            self.tiles[at] = to;
+        }
+    }
+}
+
+/// The ground an outline [`PAST`] round `claim` holds, the tiles of it
+/// with a neighbour outside it, and that ground as a field.
+fn walled(claim: &[Tile]) -> (Vec<Tile>, Vec<Tile>, Field) {
+    let ground = enclosed(claim, PAST);
+    let field = Field::of(&ground);
+    let wall = ground.iter().copied().filter(|&(q, r)| NEAR.iter().any(|&(a, b)| field.at((q + a, r + b)) == Field::OFF)).collect();
+    (ground, wall, field)
+}
+
 impl Hub {
     /// The tiles it claims: every tile built on, and every one left open.
     pub fn claim(&self) -> BTreeSet<Tile> {
@@ -401,7 +468,18 @@ impl Hub {
     /// ([`Hub::grounded`]), and it is [`SPACE`] from every other thing
     /// but those `but` names.
     fn fits(&self, tiles: &[Tile], but: &[u32]) -> bool {
-        self.grounded(tiles) && self.items.iter().all(|item| but.contains(&item.id) || gap(tiles, &item.tiles) >= SPACE - EPS)
+        self.fits_among(&self.stood(), tiles, but)
+    }
+
+    /// The number of the thing standing on each tile built on.
+    fn stood(&self) -> HashMap<Tile, u32> {
+        self.items.iter().flat_map(|item| item.tiles.iter().map(|&tile| (tile, item.id))).collect()
+    }
+
+    /// [`Hub::fits`], for a hub asked of many places: `stood` is what
+    /// stands on each of its tiles ([`Hub::stood`]).
+    fn fits_among(&self, stood: &HashMap<Tile, u32>, tiles: &[Tile], but: &[u32]) -> bool {
+        self.grounded(tiles) && tiles.iter().all(|&(q, r)| close().iter().all(|&(a, b)| stood.get(&(q + a, r + b)).is_none_or(|id| but.contains(id))))
     }
 
     /// The zone `tile` is drawn as: that whose centre is nearest it, the
@@ -445,28 +523,42 @@ impl Hub {
 
     /// How its claim lies on the ground.
     pub fn lies(&self) -> Lie {
-        let claim: Vec<Tile> = self.claim().into_iter().collect();
-        let ground = enclosed(&claim, PAST);
-        let held: HashSet<Tile> = ground.iter().copied().collect();
-        let wall: Vec<Tile> = ground.iter().copied().filter(|&(q, r)| NEAR.iter().any(|&(a, b)| !held.contains(&(q + a, r + b)))).collect();
-        let built: HashSet<Tile> = self.items.iter().flat_map(|item| item.tiles.iter().copied()).collect();
-        let mut steps: HashMap<Tile, u32> = HashMap::new();
+        let (ground, wall, gate) = self.walk();
+        Lie { ground, wall, gate, buildable: self.buildable() }
+    }
+
+    /// The tiles a thing may be built on: those inside its claim's own
+    /// outline.
+    fn buildable(&self) -> BTreeSet<Tile> {
+        enclosed(&self.claim().into_iter().collect::<Vec<_>>(), 0.0).into_iter().collect()
+    }
+
+    /// How long its wall is.
+    fn wall(&self) -> usize {
+        walled(&self.claim().into_iter().collect::<Vec<_>>()).1.len()
+    }
+
+    /// Its ground, its wall and the way in, as [`Lie`] has them.
+    fn walk(&self) -> (Vec<Tile>, Vec<Tile>, Option<Tile>) {
+        let (ground, wall, mut field) = walled(&self.claim().into_iter().collect::<Vec<_>>());
+        for &tile in self.items.iter().flat_map(|item| &item.tiles) {
+            field.set(tile, Field::BUILT);
+        }
         if let Some(hearth) = self.hearth() {
-            let mut open = VecDeque::from([hearth]);
-            steps.insert(hearth, 0);
-            while let Some((q, r)) = open.pop_front() {
+            let mut open = VecDeque::from([(hearth, 0u32)]);
+            field.set(hearth, 0);
+            while let Some(((q, r), steps)) = open.pop_front() {
                 for (a, b) in NEAR {
                     let beside = (q + a, r + b);
-                    if steps.contains_key(&beside) || !held.contains(&beside) || built.contains(&beside) {
-                        continue;
+                    if field.at(beside) == Field::ON {
+                        field.set(beside, steps + 1);
+                        open.push_back((beside, steps + 1));
                     }
-                    steps.insert(beside, steps[&(q, r)] + 1);
-                    open.push_back(beside);
                 }
             }
         }
-        let gate = wall.iter().copied().filter(|tile| steps.contains_key(tile)).min_by_key(|tile| (steps[tile], *tile));
-        Lie { ground, wall, gate, buildable: enclosed(&claim, 0.0).into_iter().collect() }
+        let gate = wall.iter().copied().filter(|&tile| field.at(tile) < Field::BUILT).min_by_key(|&tile| (field.at(tile), tile));
+        (ground, wall, gate)
     }
 
     /// Settles it once it has changed: its logistics zone on its hearth
@@ -503,18 +595,19 @@ impl Hub {
         let centre = flat(*self.zones.get(&zone)?);
         let all = self.claim();
         let tiles: Vec<Tile> = all.iter().copied().collect();
-        let now = girth(&tiles);
+        let (hull, stood) = (corners(&tiles), self.stood());
+        let now = around(&hull);
         let mut seen: HashSet<Tile> = HashSet::new();
         let mut best: Option<(usize, f64, f64, Tile)> = None;
         for &(cq, cr) in &tiles {
             for a in -4..=4 {
                 for b in -4..=4 {
                     let tile = (cq + a, cr + b);
-                    if !seen.insert(tile) || !self.fits(&[tile], &[]) || !self.in_zone(zone, tile) {
+                    if !seen.insert(tile) || !self.fits_among(&stood, &[tile], &[]) || !self.in_zone(zone, tile) {
                         continue;
                     }
                     let lived = self.items.iter().filter(|item| item.kind.houses() > 0 && item.lived() > 0 && gap(&[tile], &item.tiles) < SPACE + EPS).count();
-                    let longer = if all.contains(&tile) { 0.0 } else { girth(&[&tiles[..], &[tile]].concat()) - now };
+                    let longer = if all.contains(&tile) { 0.0 } else { longer(&hull, now, &[tile]) };
                     let far = apart(flat(tile), centre);
                     let better = best.is_none_or(|(most, least, near, at)| {
                         lived > most || lived == most && (longer < least - 1e-9 || (longer - least).abs() <= 1e-9 && (far < near - 1e-9 || (far - near).abs() <= 1e-9 && tile < at))
@@ -532,9 +625,10 @@ impl Hub {
     /// it on `on`, [`SPACE`] from everything but those `but` names.
     fn placed(&self, size: usize, from: Point, on: &BTreeSet<Tile>, but: &[u32]) -> Option<(Vec<Tile>, f64)> {
         let at: Vec<Tile> = on.iter().copied().collect();
+        let stood = self.stood();
         let mut best: Option<(Vec<Tile>, f64)> = None;
         for tiles in lying(size, &at) {
-            if !tiles.iter().all(|tile| on.contains(tile)) || !self.fits(&tiles, but) {
+            if !tiles.iter().all(|tile| on.contains(tile)) || !self.fits_among(&stood, &tiles, but) {
                 continue;
             }
             let far = apart(middle(&tiles), from);
@@ -565,7 +659,7 @@ impl Hub {
     /// The ground it may build on: inside its claim's outline, and what
     /// it has left open.
     fn land(&self) -> BTreeSet<Tile> {
-        let mut land = self.lies().buildable;
+        let mut land = self.buildable();
         land.extend(self.open.iter().copied());
         land
     }
@@ -656,7 +750,7 @@ pub fn raise(hub: &Hub, what: What) -> Option<Outcome> {
     let land = hub.land();
     let (tiles, _, wrecked) = hub.seated(kind, kind.size(), centre, &land, &[])?;
     let id = hub.push(kind, tiles);
-    hub.lies().gate?;
+    hub.walk().2?;
     Some(Outcome { hub: hub.peopled(), built: vec![id], moved: Vec::new(), razed: wrecked.iter().map(|item| item.id).collect() })
 }
 
@@ -670,14 +764,15 @@ pub fn raise_at(hub: &Hub, what: What, tile: Tile) -> Option<Outcome> {
     }
     let mut hub = hub.clone();
     let id = hub.push(kind, vec![tile]);
-    hub.lies().gate?;
+    hub.walk().2?;
     Some(Outcome { hub: hub.peopled(), built: vec![id], moved: Vec::new(), razed: Vec::new() })
 }
 
 /// The tiles of `hub` a player may raise a building of `what` on, as
 /// [`raise_at`] takes them.
 pub fn sites(hub: &Hub, what: What) -> Vec<Tile> {
-    hub.land().into_iter().filter(|&tile| hub.in_zone(what.zone(), tile) && hub.fits(&[tile], &[])).collect()
+    let stood = hub.stood();
+    hub.land().into_iter().filter(|&tile| hub.in_zone(what.zone(), tile) && hub.fits_among(&stood, &[tile], &[])).collect()
 }
 
 /// Building `id` of `hub` upgraded: the change that changes least. Its
@@ -694,7 +789,7 @@ pub fn upgrade(hub0: &Hub, id: u32) -> Option<Outcome> {
     if hub0.stranded(&from) {
         return None;
     }
-    let land = hub0.lies().buildable;
+    let land = hub0.buildable();
     let kept = |tiles: &[Tile]| from.tiles.iter().filter(|tile| tiles.contains(tile)).count();
     // Every way the larger footprint lies over the thing's own tiles, that the ground takes
     let each: Vec<Vec<Tile>> = lying(to.size(), &from.tiles).into_iter().filter(|tiles| hub0.grounded(tiles)).collect();
@@ -792,7 +887,7 @@ pub fn upgrade(hub0: &Hub, id: u32) -> Option<Outcome> {
             razed.push(taken);
         }
         let hub = hub.peopled();
-        if hub.lies().gate.is_none() {
+        if hub.walk().2.is_none() {
             continue;
         }
         let astray = tiles.iter().filter(|&&tile| !hub.in_zone(to.what.zone(), tile)).count();
@@ -835,7 +930,7 @@ pub fn downgrade(hub: &Hub, id: u32) -> Option<Outcome> {
         hub.items.push(mine);
     }
     let hub = lapsed(hub).peopled();
-    hub.lies().gate?;
+    hub.walk().2?;
     Some(Outcome { hub, built: to.map(|_| id).into_iter().collect(), moved: Vec::new(), razed: to.is_none().then_some(id).into_iter().collect() })
 }
 
@@ -930,7 +1025,7 @@ fn fitted(hub: &Hub, allowed: usize, wants: u32) -> Outcome {
     let wide: BTreeSet<Tile> = land.iter().flat_map(|&(q, r)| (-6..=6).flat_map(move |a| (-6..=6).map(move |b| (q + a, r + b)))).collect();
     let mut moved: Vec<Moved> = Vec::new();
     let mut built: Vec<u32> = Vec::new();
-    let whole = hub_of(&parts, &[&kept[..], heart.as_slice()].concat(), next).lies().wall.len() <= allowed;
+    let whole = walled(&of(&parts, &[&kept[..], heart.as_slice()].concat())).1.len() <= allowed;
     let among = heart.is_some_and(|heart| {
         let now = hub_of(&parts, &kept, next);
         (kept.is_empty() || girth(&of(&parts, &[&kept[..], &[heart]].concat())) - girth(&of(&parts, &kept)) <= 1e-9) && now.fits(&parts[heart].tiles(), &[])
@@ -971,15 +1066,16 @@ fn fitted(hub: &Hub, allowed: usize, wants: u32) -> Outcome {
     while !rest.is_empty() {
         // What no longer fits beside what was moved comes down with the rest
         let now = hub_of(&parts, &kept, next);
-        let under: HashSet<Tile> = now.items.iter().flat_map(|item| item.tiles.iter().copied()).collect();
-        let clash: Vec<usize> = rest.iter().copied().filter(|&k| match &parts[k] { Part::Thing(item) => !now.fits(&item.tiles, &[]), Part::Open(tile) => under.contains(tile) }).collect();
+        let stood = now.stood();
+        let clash: Vec<usize> = rest.iter().copied().filter(|&k| match &parts[k] { Part::Thing(item) => !now.fits_among(&stood, &item.tiles, &[]), Part::Open(tile) => stood.contains_key(tile) }).collect();
         if !clash.is_empty() {
             rest.retain(|k| !clash.contains(k));
             gone.extend(clash);
             continue;
         }
         let held = of(&parts, &kept);
-        let edge = girth(&held);
+        let hull = corners(&held);
+        let edge = around(&hull);
         let short = now.room() < need;
         let mut best: Option<(i32, f64, f64, usize)> = None;
         for &k in &rest {
@@ -989,7 +1085,7 @@ fn fitted(hub: &Hub, allowed: usize, wants: u32) -> Outcome {
                 Part::Open(_) => Zone::ALL.len() as i32,
             };
             let tiles = parts[k].tiles();
-            let longer = girth(&[&held[..], &tiles[..]].concat()) - edge;
+            let longer = longer(&hull, edge, &tiles);
             let far = apart(middle(&tiles), about);
             if best.is_none_or(|(first, least, near, _)| owed < first || owed == first && (longer < least - 1e-9 || (longer - least).abs() <= 1e-9 && far < near - 1e-9)) {
                 best = Some((owed, longer, far, k));
@@ -998,7 +1094,7 @@ fn fitted(hub: &Hub, allowed: usize, wants: u32) -> Outcome {
         let Some((owed, _, _, k)) = best else { break };
         rest.retain(|&other| other != k);
         // What the wall cannot hold is given up, and the next is tried
-        if owed >= 0 && hub_of(&parts, &[&kept[..], &[k]].concat(), next).lies().wall.len() > allowed {
+        if owed >= 0 && walled(&of(&parts, &[&kept[..], &[k]].concat())).1.len() > allowed {
             gone.push(k);
         } else {
             kept.push(k);
@@ -1043,7 +1139,7 @@ pub fn touch(a: &Hub, b: &Hub) -> bool {
 fn parted(hub: &Hub, deep: u32) -> Vec<Outcome> {
     let homes: Vec<&Item> = hub.items.iter().filter(|item| item.players > 0).collect();
     let alone = Hub { wants: hub.wants, zones: BTreeMap::new(), items: homes.iter().map(|&item| item.clone()).collect(), open: BTreeSet::new(), next: hub.next, barred: hub.barred.clone(), cliffs: hub.cliffs.clone() };
-    if homes.len() > 1 && deep < 6 && alone.lies().wall.len() > defended(hub) {
+    if homes.len() > 1 && deep < 6 && alone.wall() > defended(hub) {
         let mut far: Option<(f64, Point, Point)> = None;
         for a in &homes {
             for b in &homes {
@@ -1077,7 +1173,7 @@ fn parted(hub: &Hub, deep: u32) -> Vec<Outcome> {
 /// that takes: an outcome to each, or none where they defend it already,
 /// or where no player lives in it to draw it in round.
 pub fn shrink(hub: &Hub) -> Option<Vec<Outcome>> {
-    (hub.players() > 0 && hub.lies().wall.len() > defended(hub)).then(|| parted(hub, 0))
+    (hub.players() > 0 && hub.wall() > defended(hub)).then(|| parted(hub, 0))
 }
 
 /// `hub` planned for `want` residents. Planned for more, it claims ground
@@ -1118,10 +1214,12 @@ pub fn plan(hub: &Hub, want: u32) -> Option<Outcome> {
     let mut marks: Vec<Tile> = Vec::new();
     let from = hub.items.len();
     if lie.wall.len() <= most {
+        let mut stood = hub.stood();
         for (_, tile) in sites {
-            if !hub.fits(&[tile], &[]) {
+            if !hub.fits_among(&stood, &[tile], &[]) {
                 continue;
             }
+            stood.insert(tile, 0);
             hub.items.push(Item { id: 0, kind: Kind::first(What::Home), tiles: vec![tile], players: 0, settlers: 0 });
             if !lie.buildable.contains(&tile) {
                 let then = hub.lies();

@@ -52,7 +52,19 @@ pub fn outline(points: &[Point]) -> Vec<Point> {
 /// How far round the tightest outline of `tiles` is: none for one tile,
 /// there and back for tiles in a line.
 pub fn girth(tiles: &[(i32, i32)]) -> f64 {
-    let corners = outline(&tiles.iter().map(|&tile| flat(tile)).collect::<Vec<_>>());
+    around(&corners(tiles))
+}
+
+/// The corners of the tightest outline round `tiles`, in turn. An outline
+/// round these and more is the outline round `tiles` and more, so what a
+/// further tile adds to a large set is found from its corners alone.
+pub fn corners(tiles: &[(i32, i32)]) -> Vec<Point> {
+    outline(&tiles.iter().map(|&tile| flat(tile)).collect::<Vec<_>>())
+}
+
+/// How far round the tightest outline of `points` is.
+pub fn around(points: &[Point]) -> f64 {
+    let corners = outline(points);
     (0..corners.len()).map(|k| apart(corners[k], corners[(k + 1) % corners.len()])).sum()
 }
 
@@ -60,14 +72,14 @@ pub fn girth(tiles: &[(i32, i32)]) -> f64 {
 /// drawn `past` tiles out from each, in `q` then `r` order. None for no
 /// tiles.
 pub fn enclosed(tiles: &[(i32, i32)], past: f64) -> Vec<(i32, i32)> {
-    let round = |tile: &(i32, i32)| {
-        let (x, y) = flat(*tile);
+    let round = |&(x, y): &Point| {
         (0..ROUND).map(move |k| {
             let turn = k as f64 * std::f64::consts::TAU / ROUND as f64;
             (x + past * turn.cos(), y + past * turn.sin())
         })
     };
-    let corners = outline(&tiles.iter().flat_map(round).collect::<Vec<_>>());
+    // Only a corner tile's round reaches the outline of them all
+    let corners = outline(&corners(tiles).iter().flat_map(round).collect::<Vec<_>>());
     if corners.len() < 3 {
         return tiles.to_vec();
     }
@@ -79,11 +91,16 @@ pub fn enclosed(tiles: &[(i32, i32)], past: f64) -> Vec<(i32, i32)> {
     let rise = 3f64.sqrt() / 2.0;
     let mut held = Vec::new();
     for r in (low.1 / rise).floor() as i32..=(high.1 / rise).ceil() as i32 {
-        for q in (low.0 - r as f64 / 2.0).floor() as i32..=(high.0 - r as f64 / 2.0).ceil() as i32 {
-            if inside(flat((q, r))) {
-                held.push((q, r));
-            }
+        // An outline has no hollow, so a row's tiles inside it are one run: found from its two ends
+        let mut first = (low.0 - r as f64 / 2.0).floor() as i32;
+        let mut last = (high.0 - r as f64 / 2.0).ceil() as i32;
+        while first <= last && !inside(flat((first, r))) {
+            first += 1;
         }
+        while last > first && !inside(flat((last, r))) {
+            last -= 1;
+        }
+        held.extend((first..=last).map(|q| (q, r)));
     }
     held.sort();
     held
