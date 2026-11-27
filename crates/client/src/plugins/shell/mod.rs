@@ -22,7 +22,6 @@ use common_bevy::{
     chunk::{calculate_visible_chunks, loc_to_chunk, FIXED_STREAM_RADIUS},
     components::{
         entity_type::{actor::*, EntityType},
-        equipment::Equipment,
         Actor, Loc,
     },
     message::{Event, Try},
@@ -131,7 +130,6 @@ impl Plugin for ShellPlugin {
         app.add_systems(Update, track_loading.run_if(in_state(Stage::Loading)));
         app.add_systems(OnEnter(Stage::Loading), start_loading);
         app.add_systems(OnEnter(Stage::Playing), arrive);
-        app.add_systems(OnEnter(Stage::CharacterSelect), dress_preview);
         app.add_systems(OnExit(InWorld), leave_world);
     }
 }
@@ -171,12 +169,6 @@ pub fn leave(writer: &mut MessageWriter<Try>, next: &mut NextState<Stage>, enter
 /// The body the character screen shows, the one the server gives a player.
 pub fn preview_body() -> EntityType {
     EntityType::Actor(ActorImpl::new(Origin::Evolved, Approach::Direct, Resilience::Vital, ActorIdentity::Player))
-}
-
-fn dress_preview(mut figure: Query<&mut Equipment, With<Figure>>) {
-    if let Ok(mut worn) = figure.single_mut() {
-        worn.set_if_neq(Equipment::default());
-    }
 }
 
 fn start_loading(mut loading: ResMut<Loading>, time: Res<Time<Real>>) {

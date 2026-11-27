@@ -260,6 +260,10 @@ pub enum Event {
     /// ungated on the wire as `Teleport`.
     /// Server → Client: this connection now sees the world as `ent`.
     View { ent: Entity },
+    /// Server → Client: what this connection's character wears while it
+    /// is out of the world, nothing where the player has made none. Sent
+    /// once the character is recalled and each time it leaves the world.
+    Wearing { equipment: crate::components::equipment::Equipment },
 }
 
 impl Event {
@@ -331,7 +335,8 @@ impl Event {
             | Event::ChangeCalendar { .. }
             | Event::Settings { .. }
             | Event::Rollback { .. }
-            | Event::Calendar { .. } => None,
+            | Event::Calendar { .. }
+            | Event::Wearing { .. } => None,
         }
     }
 }

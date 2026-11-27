@@ -9,6 +9,7 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<character_panel::CharacterPanelState>();
         app.init_resource::<closeup::Turn>();
+        app.add_systems(OnEnter(crate::plugins::shell::Stage::Connecting), closeup::clear);
         app.init_resource::<bag_panel::BagCursor>();
         app.init_resource::<drop_panel::DropChoice>();
 
@@ -50,6 +51,7 @@ impl Plugin for UiPlugin {
                 equipment_panel::update_slots,
                 closeup::show,
                 closeup::sync_figure,
+                closeup::do_wearing,
                 closeup::stage_layers,
                 closeup::activate,
                 closeup::turn,

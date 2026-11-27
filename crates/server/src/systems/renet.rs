@@ -89,6 +89,30 @@ pub fn admit(mut admission: ResMut<Admission>, mut commands: Commands) {
     }
 }
 
+/// The clients told what their character wears since they were last in
+/// the world.
+#[derive(Resource, Default)]
+pub struct Shown(std::collections::HashSet<::renet::ClientId>);
+
+/// Tells each client out of the world what its character wears, once its
+/// character is recalled and again each time it leaves the world.
+pub fn show_characters(mut conn: ResMut<ServerNet>, lobby: Res<Lobby>, mut known: ResMut<Characters>, mut shown: ResMut<Shown>) {
+    let out: Vec<_> = conn.clients_id().into_iter().filter(|client_id| !lobby.contains_left(client_id)).collect();
+    shown.0.retain(|client_id| out.contains(client_id));
+    for client_id in out {
+        if shown.0.contains(&client_id) {
+            continue;
+        }
+        let Some(identity) = conn.identity(client_id) else { continue };
+        if !known.knows(identity) {
+            continue;
+        }
+        let equipment = known.as_left(identity).map(|kept| kept.equipment).unwrap_or_default();
+        conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Wearing { equipment }});
+        shown.0.insert(client_id);
+    }
+}
+
 pub fn do_manage_connections(
     trigger: On<NetServerEvent>,
     mut commands: Commands,

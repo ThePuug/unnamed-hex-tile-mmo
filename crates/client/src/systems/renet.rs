@@ -78,6 +78,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::Wants { .. } => "Wants",
         Event::Sheltered { .. } => "Sheltered",
         Event::View { .. } => "View",
+        Event::Wearing { .. } => "Wearing",
         Event::SetLoadout { .. } => "SetLoadout",
         _ => "Other",
     }
@@ -110,6 +111,11 @@ pub fn write_do(
         // Track network metrics (received from server)
         let message_type = get_message_type_name(&message);
         network_metrics.record_received(message_type, serialized.len());
+        // The one message about the character out of the world
+        if let Do { event: Event::Wearing { .. } } = message {
+            do_writer.write(message);
+            continue;
+        }
         if !in_world {
             continue;
         }

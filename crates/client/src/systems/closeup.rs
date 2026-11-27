@@ -4,10 +4,10 @@
 //!
 //! The stage is a second scene of the player's model on a render layer of
 //! its own, far under the world, with its own light and a camera drawing
-//! into a texture every `CloseupView` shows. The figure carries the
-//! player's Equipment while there is a player, and what a new character
-//! wears, nothing, while there is not, so the one dressing pipeline
-//! dresses it.
+//! into a texture every `CloseupView` shows. The figure stands there
+//! from the moment the server says what the character wears
+//! (`Event::Wearing`), never before, and carries the player's Equipment
+//! while there is a player, so the one dressing pipeline dresses it.
 
 use bevy::{
     camera::{visibility::RenderLayers, ClearColorConfig, RenderTarget},
@@ -18,6 +18,7 @@ use std::f32::consts::PI;
 
 use common_bevy::{
     components::{entity_type::EntityType, equipment::Equipment, Actor},
+    message::{Do, Event},
     resources::map::Map,
 };
 
@@ -62,11 +63,10 @@ pub struct Turn {
 #[derive(Resource)]
 pub struct Closeup(Handle<Image>);
 
-/// Builds the stage: its camera and light, and the figure on it.
+/// Builds the stage: its camera and light.
 pub fn setup(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
-    asset_server: Res<AssetServer>,
     map: Res<Map>,
 ) {
     let target = images.add(Image::new_target_texture(WIDTH, HEIGHT, TextureFormat::Rgba8UnormSrgb, None));
@@ -104,25 +104,6 @@ pub fn setup(
         Transform::from_translation(STAGE + Vec3::new(-2.0, 4.0, -3.0) * r).looking_at(at, Vec3::Y),
         RenderLayers::layer(LAYER),
     ));
-
-    let typ: EntityType = crate::plugins::shell::preview_body();
-    let equipment = Equipment::default();
-    commands
-        .spawn((
-            Figure,
-            crate::resources::OffWorld,
-            typ,
-            equipment,
-            WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(actor::get_asset(typ)))),
-            animator::Rig(asset_server.load(actor::get_asset(typ))),
-            Transform {
-                translation: STAGE,
-                scale: Vec3::splat(map.radius()),
-                ..default()
-            },
-            RenderLayers::layer(LAYER),
-        ))
-        .observe(actor::ready);
 }
 
 /// Gives every view of the closeup the texture the stage is drawn into.
@@ -150,6 +131,51 @@ pub fn sync_figure(
     let (Ok(worn), Ok(mut figure)) = (player.single(), figure.single_mut()) else { return };
     if *figure != *worn {
         *figure = *worn;
+    }
+}
+
+/// Dresses the figure in what the server says the character wears out
+/// of the world, and stands it on the stage the first time it is said.
+pub fn do_wearing(
+    mut commands: Commands,
+    mut reader: MessageReader<Do>,
+    mut figure: Query<&mut Equipment, With<Figure>>,
+    asset_server: Res<AssetServer>,
+    map: Res<Map>,
+    turn: Res<Turn>,
+) {
+    let Some(&equipment) = reader.read().filter_map(|Do { event }| match event {
+        Event::Wearing { equipment } => Some(equipment),
+        _ => None,
+    }).last() else { return };
+    if let Ok(mut worn) = figure.single_mut() {
+        worn.set_if_neq(equipment);
+        return;
+    }
+    let typ: EntityType = crate::plugins::shell::preview_body();
+    commands
+        .spawn((
+            Figure,
+            crate::resources::OffWorld,
+            typ,
+            equipment,
+            WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(actor::get_asset(typ)))),
+            animator::Rig(asset_server.load(actor::get_asset(typ))),
+            Transform {
+                translation: STAGE,
+                rotation: Quat::from_rotation_y(turn.current),
+                scale: Vec3::splat(map.radius()),
+            },
+            RenderLayers::layer(LAYER),
+        ))
+        .observe(actor::ready);
+}
+
+/// Takes the figure off the stage as the server is lost: what the next
+/// connection's character wears is not known until it says.
+pub fn clear(mut commands: Commands, figure: Query<Entity, With<Figure>>) {
+    for figure in &figure {
+        commands.entity(figure).despawn();
     }
 }
 
