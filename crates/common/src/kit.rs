@@ -46,9 +46,12 @@ impl Slot {
 }
 
 /// What a set is: an armour's weight, or what kind of thing is held. A
-/// map is held, and charts the ground round its holder.
+/// map is held, and charts the ground round its holder. A base set's
+/// pieces are what a body shows in the slots nothing is worn in, and no
+/// item of anyone's.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Kind {
+    Base,
     Light,
     Medium,
     Heavy,
@@ -84,7 +87,8 @@ impl Set {
 /// piece's own through any rename and never another's; `name`, the stem
 /// of `models/<name>-<actor>.glb`; `set`, its set's place in [`SETS`];
 /// `fills`, every slot it takes, its own first; `shapes`, how many glTF
-/// scenes its file holds, which its set's seeds are cut in in turn.
+/// scenes its file holds, which its set's seeds are cut in in turn;
+/// `wearers`, the bodies it is cut for, each a file of its own.
 #[derive(Debug)]
 pub struct Piece {
     pub id: u32,
@@ -92,6 +96,7 @@ pub struct Piece {
     pub set: usize,
     pub fills: &'static [Slot],
     pub shapes: u8,
+    pub wearers: &'static [&'static str],
 }
 
 include!(concat!(env!("OUT_DIR"), "/kit.rs"));

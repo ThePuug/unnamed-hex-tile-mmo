@@ -374,7 +374,10 @@ actor's mesh the piece's leather lies over; `socket`. It swaps the actor's
 index buffer on cached copies shared by every actor in the same
 combination; no piece hides any of another. `Piece::name` is the asset
 stem, and code that needs one piece asks for it by that name
-(`Piece::named`).
+(`Piece::named`). A piece is drawn only on a body the assets cut it for
+(`Piece::fits`). A set of kind `Base` is what a body shows where
+nothing is worn: its pieces are drawn in the slots left empty
+(`Equipment::shown`) and are never an item, worn, bagged or kept.
 
 **Kept by number.** The store keeps a piece, a material, a skill, an
 archetype and a ledger entry's cause by its `id()`, never by a name or a

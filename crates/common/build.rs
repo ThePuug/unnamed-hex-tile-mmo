@@ -140,10 +140,14 @@ fn kit() -> String {
         let fills: Vec<String> = piece["fills"].as_array().expect("a piece's slots").iter()
             .map(|slot| format!("Slot::{}", variant(slot.as_str().expect("a slot's name"))))
             .collect();
+        let wearers: Vec<String> = piece["wearers"].as_array().expect("a piece's wearers").iter()
+            .map(|actor| format!("{:?}", actor.as_str().expect("a wearer's name")))
+            .collect();
         out.push_str(&format!(
-            "    Piece {{ id: {id}, name: {name:?}, set: {set}, fills: &[{}], shapes: {} }},\n",
+            "    Piece {{ id: {id}, name: {name:?}, set: {set}, fills: &[{}], shapes: {}, wearers: &[{}] }},\n",
             fills.join(", "),
             piece["shapes"].as_u64().expect("a piece's shapes"),
+            wearers.join(", "),
         ));
     }
     out.push_str("];\n");

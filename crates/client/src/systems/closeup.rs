@@ -5,9 +5,9 @@
 //! The stage is a second scene of the player's model on a render layer of
 //! its own, far under the world, with its own light and a camera drawing
 //! into a texture every `CloseupView` shows. The figure carries the
-//! player's Equipment while there is a player, and the outfit the
-//! character screen dresses it in while there is not, so the one dressing
-//! pipeline dresses it.
+//! player's Equipment while there is a player, and what a new character
+//! wears, nothing, while there is not, so the one dressing pipeline
+//! dresses it.
 
 use bevy::{
     camera::{visibility::RenderLayers, ClearColorConfig, RenderTarget},
@@ -106,7 +106,7 @@ pub fn setup(
     ));
 
     let typ: EntityType = crate::plugins::shell::preview_body();
-    let equipment = Equipment::starting_outfit();
+    let equipment = Equipment::default();
     commands
         .spawn((
             Figure,

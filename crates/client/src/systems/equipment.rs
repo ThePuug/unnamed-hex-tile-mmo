@@ -135,8 +135,9 @@ pub fn do_inventory(
     }
 }
 
-/// Spawns a scene for each item an actor newly wears and despawns the scene
-/// of each it took off.
+/// Spawns a scene for each item newly drawn on an actor
+/// (`Equipment::shown`, those cut for its body) and despawns the scene
+/// of each no longer drawn.
 pub fn dress(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -144,7 +145,8 @@ pub fn dress(
     worn: Query<(Entity, &Worn)>,
 ) {
     for (actor, typ, equipment, children) in &actors {
-        let wanted: HashSet<Item> = equipment.items().collect();
+        let body = actor_name(*typ);
+        let wanted: HashSet<Item> = equipment.shown().filter(|item| item.piece.fits(body)).collect();
         let mut present = HashSet::new();
         for (piece, worn) in children.into_iter().flatten().filter_map(|&c| worn.get(c).ok()) {
             if wanted.contains(&worn.item) {
@@ -156,7 +158,6 @@ pub fn dress(
                 commands.entity(piece).despawn();
             }
         }
-        let body = actor_name(*typ);
         for item in wanted.difference(&present) {
             let path = format!("models/{}-{}.glb", item.piece.name(), body);
             commands.spawn((

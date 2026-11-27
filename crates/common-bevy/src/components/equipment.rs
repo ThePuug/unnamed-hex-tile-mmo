@@ -62,6 +62,11 @@ impl Piece {
         self.declared().fills
     }
 
+    /// Whether the assets cut the piece for the body named `body`.
+    pub fn fits(self, body: &str) -> bool {
+        self.declared().wearers.contains(&body)
+    }
+
     /// The asset's name as a player reads it: `ranger-hood` is "Ranger Hood".
     pub fn display_name(self) -> String {
         self.name()
@@ -91,6 +96,7 @@ impl Piece {
             (Kind::Sword | Kind::Shield, _) => 3,
             (Kind::Axe | Kind::Mace, _) => 4,
             (Kind::Map, _) => 1,
+            (Kind::Base, _) => 0,
         }
     }
 }
@@ -227,16 +233,14 @@ impl Equipment {
         Slot::ALL.into_iter().filter_map(|slot| self.worn(slot).filter(|item| item.piece.slot() == slot))
     }
 
-    /// What a player starts wearing, and what the character screen shows:
-    /// the ranger's leather, an arming sword and the sword-breaker.
-    pub fn starting_outfit() -> Self {
-        const SEED: u16 = 2;
-        let mut outfit = Equipment::default();
-        for name in ["ranger-hood", "ranger-vest", "ranger-gloves", "ranger-girdle", "ranger-pants", "ranger-boots", "arming-sword"] {
-            outfit.wear(Item::of(Piece::named(name), SEED));
-        }
-        outfit.wear(Item::of(Piece::named("sword-breaker"), 0));
-        outfit
+    /// Everything drawn on the actor: what it wears, and each piece of a
+    /// base set (`Kind::Base`) none of whose slots anything is worn in,
+    /// which is no item of anyone's.
+    pub fn shown(&self) -> impl Iterator<Item = Item> + '_ {
+        let bare = Piece::all()
+            .filter(|piece| piece.set().kind == Kind::Base && piece.slots().iter().all(|&slot| self.worn(slot).is_none()))
+            .map(|piece| Item::of(piece, 0));
+        self.items().chain(bare)
     }
 }
 
@@ -261,11 +265,6 @@ pub struct Inventory {
 }
 
 impl Inventory {
-    /// What a player starts owning: the outfit it wears, and an empty bag.
-    pub fn wearing(outfit: &Equipment) -> Self {
-        Self { items: outfit.items().collect(), ..default() }
-    }
-
     pub fn contains(&self, item: Item) -> bool {
         self.items.contains(&item)
     }
@@ -354,6 +353,17 @@ mod tests {
         Item::of(Piece::named(name), seed)
     }
 
+    /// A player in the ranger's leather, owning what it wears and
+    /// nothing else.
+    fn dressed() -> (Equipment, Inventory) {
+        let mut worn = Equipment::default();
+        for name in ["ranger-hood", "ranger-vest", "ranger-gloves", "ranger-girdle", "ranger-pants", "ranger-boots"] {
+            worn.wear(item(name, 2));
+        }
+        let bag = Inventory { items: worn.items().collect(), ..default() };
+        (worn, bag)
+    }
+
     fn of(material: common::Material, count: u32) -> common::Stack {
         common::Stack { kind: common::Stackable::Material(material), count }
     }
@@ -403,12 +413,28 @@ mod tests {
         assert_ne!(Piece::named("ranger-pants").slot(), Piece::named("ranger-boots").slot());
     }
 
-    /// A player starts wearing its outfit with nothing in the bag; what it
-    /// takes off goes into the bag, and what it wears leaves it.
+    /// A body shows a base piece in the slot it fills until something
+    /// is worn there, and never as one of the items it wears.
+    #[test]
+    fn a_base_piece_shows_where_nothing_is_worn() {
+        let base = |worn: &Equipment| worn.shown().filter(|item| item.piece.set().kind == Kind::Base).collect::<Vec<_>>();
+        let mut worn = Equipment::default();
+        let bare = base(&worn);
+        assert!(!bare.is_empty(), "the assets declare a base piece");
+        assert_eq!(worn.items().count(), 0);
+        for item in bare {
+            let over = Piece::all().find(|piece| piece.set().kind != Kind::Base && piece.slot() == item.piece.slot()).unwrap();
+            worn.wear(Item::of(over, 0));
+            assert!(!base(&worn).contains(&item));
+            assert!(worn.shown().any(|shown| shown.piece == over));
+        }
+    }
+
+    /// What a player takes off goes into the bag, and what it wears
+    /// leaves it.
     #[test]
     fn the_bag_is_what_is_owned_and_not_worn() {
-        let mut worn = Equipment::starting_outfit();
-        let mut bag = Inventory::wearing(&worn);
+        let (mut worn, mut bag) = dressed();
         assert_eq!(bag.items.len(), worn.items().count());
         assert_eq!(bag.stacks(&worn), 0);
         let vest = worn.worn(Slot::Torso).unwrap();
@@ -426,8 +452,7 @@ mod tests {
     /// a player is burdened, and nothing goes in past the second.
     #[test]
     fn weight_burdens_and_then_bars() {
-        let worn = Equipment::starting_outfit();
-        let mut bag = Inventory::wearing(&worn);
+        let (worn, mut bag) = dressed();
         assert!(bag.weight() > 0 && !bag.is_burdened());
         let stone = common::Material::Basement;
         let kind = common::Stackable::Material(stone);
@@ -446,8 +471,7 @@ mod tests {
     /// ground as its own pile, which nothing joins.
     #[test]
     fn a_piece_is_dropped_from_the_bag_and_lies_alone() {
-        let mut worn = Equipment::starting_outfit();
-        let mut bag = Inventory::wearing(&worn);
+        let (mut worn, mut bag) = dressed();
         let vest = worn.worn(Slot::Torso).unwrap();
         assert!(!bag.take_out(&worn, vest), "what is worn stays on");
         worn.take_off(vest);

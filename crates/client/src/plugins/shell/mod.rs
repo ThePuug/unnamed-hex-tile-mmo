@@ -175,7 +175,7 @@ pub fn preview_body() -> EntityType {
 
 fn dress_preview(mut figure: Query<&mut Equipment, With<Figure>>) {
     if let Ok(mut worn) = figure.single_mut() {
-        worn.set_if_neq(Equipment::starting_outfit());
+        worn.set_if_neq(Equipment::default());
     }
 }
 

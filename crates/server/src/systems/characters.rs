@@ -37,13 +37,12 @@ pub struct Kept {
 }
 
 impl Kept {
-    /// A player's first character, standing at `at`: the starting outfit,
-    /// an empty bag and the starting build.
+    /// A player's first character, standing at `at`: nothing worn, an
+    /// empty bag and the starting build.
     pub fn fresh(at: Qrz) -> Self {
-        let equipment = Equipment::starting_outfit();
         Self {
-            equipment,
-            inventory: Inventory::wearing(&equipment),
+            equipment: Equipment::default(),
+            inventory: Inventory::default(),
             attrs: ActorAttributes::new(-3, 4, 0, 1, 0, 0, -3, 4, 0),
             loadout: Loadout::default(),
             at,
