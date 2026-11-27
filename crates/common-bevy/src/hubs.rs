@@ -93,17 +93,6 @@ struct After {
     took: Vec<HubId>,
 }
 
-/// How high the ground lies on a tile, in levels: what a wall's way in
-/// is placed by.
-#[derive(Clone)]
-pub struct Lie(std::sync::Arc<dyn Fn(i32, i32) -> i32 + Send + Sync>);
-
-impl std::fmt::Debug for Lie {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Lie")
-    }
-}
-
 /// A number from a hub and a tile, the same on every run and spread
 /// evenly: what picks one tile of several as good.
 fn drawn(id: HubId, tile: Tile) -> u64 {
@@ -124,7 +113,8 @@ pub struct KeptItem {
 
 /// A hub as a store keeps it: the tile it is known by, how many it is
 /// planned for, its zones by their numbers, what stands in it, the ground
-/// it has open, the zones with a planner, and the hubs it took in. `sites`
+/// it has open, the zones with a planner, the way in through its wall and
+/// the path to it as a plan last put them, and the hubs it took in. `sites`
 /// is how a hub was kept while it was build sites on a lattice, each with
 /// the number of what stood on it: one kept so has no `items`, and is laid
 /// again from them.
@@ -147,6 +137,10 @@ pub struct Kept {
     pub hired: Vec<u32>,
     #[serde(default)]
     pub walled: bool,
+    #[serde(default)]
+    pub gate: Option<Tile>,
+    #[serde(default)]
+    pub path: Vec<Tile>,
     pub took: Vec<Tile>,
 }
 
@@ -169,6 +163,8 @@ impl Kept {
             next: hub.next,
             hired: hired.iter().map(|zone| zone.id()).collect(),
             walled,
+            gate: None,
+            path: Vec::new(),
             took: took.iter().map(|id| (id.0, id.1)).collect(),
         }
     }
@@ -270,7 +266,9 @@ pub struct Hubs {
     /// in the world.
     extra: u32,
     changed: bool,
-    lie: Lie,
+    /// How high each tile lies, in levels, as a survey last said
+    /// ([`Hubs::survey`]): what a wall's way in is placed by.
+    levels: HashMap<Tile, i32>,
 }
 
 /// The tiles between two tiles of the flat grid.
@@ -362,14 +360,7 @@ impl Hubs {
     /// The hubs of a world whose haven is the tile `haven`: none, with
     /// nothing built.
     pub fn new(haven: Tile) -> Self {
-        Self { haven, hubs: HashMap::new(), residents: HashMap::new(), extra: 0, changed: false, lie: Lie(std::sync::Arc::new(|_, _| 0)) }
-    }
-
-    /// These hubs on ground that lies as `level` says, a tile's height
-    /// in levels, where they were on the flat.
-    pub fn on(mut self, level: impl Fn(i32, i32) -> i32 + Send + Sync + 'static) -> Self {
-        self.lie = Lie(std::sync::Arc::new(level));
-        self
+        Self { haven, hubs: HashMap::new(), residents: HashMap::new(), extra: 0, changed: false, levels: HashMap::new() }
     }
 
     /// `after` as it is held.
@@ -388,13 +379,15 @@ impl Hubs {
     /// those as near, the one on the gentlest ground, which differs least
     /// in height from the tiles round it; of those as gentle, one drawn by
     /// the hub and the tile. Where no walk reaches the wall, the ground is
-    /// taken as flat.
+    /// taken as flat. The ground lies as it was last surveyed
+    /// ([`Hubs::survey`]), and a tile no survey told of is stepped on from
+    /// any other.
     fn way(&self, id: HubId, hub: &plan::Hub, ground: &Ground) -> (Option<Tile>, Vec<Tile>) {
         let Some(hearth) = hub.hearth() else { return (None, Vec::new()) };
         let built: HashSet<Tile> = hub.items.iter().flat_map(|item| item.tiles.iter().copied()).collect();
-        let level = &self.lie.0;
-        let walked = |a: Tile, b: Tile| (level(a.0, a.1) - level(b.0, b.1)).abs() <= 1;
-        let steep = |(q, r): Tile| qrz::DIRECTIONS.iter().map(|d| (level(q + d.q, r + d.r) - level(q, r)).abs()).max().unwrap_or(0);
+        let level = |tile: Tile| self.levels.get(&tile).copied();
+        let walked = |a: Tile, b: Tile| level(a).zip(level(b)).is_none_or(|(a, b)| (a - b).abs() <= 1);
+        let steep = |(q, r): Tile| level((q, r)).map_or(0, |here| qrz::DIRECTIONS.iter().filter_map(|d| level((q + d.q, r + d.r))).map(|there| (there - here).abs()).max().unwrap_or(0));
         let leaves = |tile: Tile| qrz::DIRECTIONS.iter().map(|d| (tile.0 + d.q, tile.1 + d.r)).any(|out| ground.tiles.binary_search(&out).is_err() && walked(tile, out));
         let near = |steps: &HashMap<Tile, u32>, open: &dyn Fn(Tile) -> bool| {
             ground.wall.iter().copied().filter(|&tile| open(tile)).filter_map(|tile| Some((steps.get(&tile)?, steep(tile), drawn(id, tile), tile))).min().map(|(.., tile)| tile)
@@ -737,13 +730,16 @@ impl Hubs {
     }
 
     /// Tells hub `id` how its ground lies: the tiles nothing is planned
-    /// on, and each pair of tiles side by side with a cliff between them,
-    /// the lesser first. Its planners plan round both from then. It is no
-    /// plan and changes nothing that stands; the ground is the world's to
-    /// say, and is said again before anything is planned.
-    pub fn survey(&mut self, id: HubId, barred: BTreeSet<Tile>, cliffs: BTreeSet<(Tile, Tile)>) {
+    /// on, each pair of tiles side by side with a cliff between them, the
+    /// lesser first, and how high each tile looked at lies, in levels. Its
+    /// planners plan round the first two from then, and a wall's way in is
+    /// placed by the last. It is no plan and changes nothing that stands;
+    /// the ground is the world's to say, and is said again before
+    /// anything is planned.
+    pub fn survey(&mut self, id: HubId, barred: BTreeSet<Tile>, cliffs: BTreeSet<(Tile, Tile)>, levels: impl IntoIterator<Item = (Tile, i32)>) {
         if let Some(held) = self.hubs.get_mut(&id) {
             (held.hub.barred, held.hub.cliffs) = (barred, cliffs);
+            self.levels.extend(levels);
         }
     }
 
@@ -861,18 +857,23 @@ impl Hubs {
             .into_iter()
             .map(|id| {
                 let held = &self.hubs[&id];
-                Kept::of((id.0, id.1), &held.hub, &held.hired, held.walled, &held.took)
+                Kept { gate: held.gate, path: held.path.clone(), ..Kept::of((id.0, id.1), &held.hub, &held.hired, held.walled, &held.took) }
             })
             .collect()
     }
 
     /// Lays the hubs kept from an earlier run, and the recent players'
-    /// homes.
+    /// homes. A hub's way in is where it was kept, a tile of its wall: no
+    /// survey has told how the ground lies yet, and one placed anew now
+    /// would stand where the stakes do.
     pub fn recall(&mut self, hubs: Vec<Kept>, residents: Vec<(Identity, Option<Tile>)>) {
         for kept in hubs {
             let (hub, hired, walled) = kept.laid();
             let id = HubId(kept.id.0, kept.id.1);
-            let held = self.hold(&After { id, hub, hired, walled, took: kept.took.iter().map(|&(q, r)| HubId(q, r)).collect() });
+            let mut held = self.hold(&After { id, hub, hired, walled, took: kept.took.iter().map(|&(q, r)| HubId(q, r)).collect() });
+            if let Some(gate) = kept.gate.filter(|gate| held.ground.wall.contains(gate)) {
+                (held.gate, held.path) = (Some(gate), kept.path.clone());
+            }
             self.hubs.insert(id, held);
         }
         for (who, home) in residents {
@@ -1168,10 +1169,19 @@ mod tests {
         let gate = on_flat.way_in(id).expect("a camp has a way in");
         assert!(on_flat.ground(id).unwrap().wall.contains(&gate));
         assert_eq!(on_flat.path(id).last(), Some(&gate));
-        // The same camp where that tile stands on a crag: the way in is elsewhere
-        let mut craggy = Hubs::new((0, 0)).on(move |q, r| if (q, r) == gate { 9 } else { 0 });
-        let id = craggy.founded((300, 0));
-        assert_ne!(craggy.way_in(id), Some(gate));
+        // The same camp surveyed with that tile on a crag: the way in a plan leaves is elsewhere
+        let ground = on_flat.ground(id).unwrap().tiles.clone();
+        on_flat.survey(id, BTreeSet::new(), BTreeSet::new(), ground.into_iter().map(|tile| (tile, if tile == gate { 9 } else { 0 })));
+        let plan = on_flat.planned(id, plan::CAMP);
+        carried(&mut on_flat, plan);
+        assert!(on_flat.ground(id).unwrap().wall.contains(&gate), "the wall stands where it did");
+        assert_ne!(on_flat.way_in(id), Some(gate));
+        // Kept and laid again with no survey, its way in is where it was
+        let (kept, way) = (on_flat.kept(), on_flat.way_in(id));
+        let mut again = Hubs::new((0, 0));
+        again.recall(kept, Vec::new());
+        assert_eq!(again.way_in(id), way);
+        assert_eq!(again.path(id), on_flat.path(id));
     }
 
     /// Influence is whole at the haven and falls away from it, and a

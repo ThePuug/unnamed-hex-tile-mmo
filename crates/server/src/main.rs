@@ -181,9 +181,7 @@ fn main() {
     app.add_systems(FixedUpdate, crate::systems::settlers::settle);
     app.add_systems(Update, crate::systems::settlers::tell_stopped.run_if(on_timer(Duration::from_secs(1))));
     let registry = crate::resources::event_registry::EventRegistry::new(::world::WORLD_SEED);
-    // A wall's way in is placed by the ground as the world made it
-    let ground = registry.clone();
-    app.insert_resource(common_bevy::hubs::Hubs::new((haven.q, haven.r)).on(move |q, r| ground.elevation_at(q, r)));
+    app.insert_resource(common_bevy::hubs::Hubs::new((haven.q, haven.r)));
     // `CLEARING=<radius>[@<q>,<r>][~]` fells and mines every tile that far
     // round the tile named, or the haven, before anything is served: a
     // fixture for seeing changes from afar. With `~` it thins out toward its
