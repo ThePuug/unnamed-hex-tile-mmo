@@ -90,6 +90,10 @@ pub struct SkyMaterial {
     /// as a chord, none while there is no visitor.
     #[uniform(0)]
     pub visitor: Vec4,
+    /// To the moon, a unit vector in the world, and in `w` its radius as
+    /// a chord: no star shows across its disc, lit or dark.
+    #[uniform(0)]
+    pub moon: Vec4,
 }
 
 impl Material for SkyMaterial {
@@ -503,6 +507,7 @@ pub fn setup(
             core: common_bevy::sky::core().extend(0.),
             nebulae: common_bevy::sky::nebulae(),
             visitor: Vec4::X,
+            moon: Vec4::X,
         })),
         Transform::default(),
         NotShadowCaster,
@@ -782,6 +787,7 @@ pub fn update(
         let thick = (1. - visibility).max(HAZE_DUST * air.dust);
         sky.night = Vec4::new(stars, 1. - open, HAZE_TOP_CLEAR + (HAZE_TOP_THICK - HAZE_TOP_CLEAR) * thick, 1. - visibility);
         sky.visitor = v_toward.extend(2. * sin(v_wide / 4.));
+        sky.moon = m_toward.extend(2. * sin(MOON_ANGULAR_DIAMETER / 4.));
         (sky.turn_east, sky.turn_up, sky.turn_south) = (sphere.x_axis.extend(0.), sphere.y_axis.extend(0.), sphere.z_axis.extend(0.));
     }
 
