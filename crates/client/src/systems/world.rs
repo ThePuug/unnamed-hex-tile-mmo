@@ -18,9 +18,9 @@ use bevy_light::{CascadeShadowConfig, CascadeShadowConfigBuilder, NotShadowCaste
 /// the haze dims by at night.
 const SUN_ILLUMINANCE: f32 = 10_000.;
 /// Apparent diameters of the sun's and the moon's discs. Earth's are both
-/// about half a degree; the sun's is four times that so it is more than
+/// about half a degree; the sun's is six times that so it is more than
 /// a dot in the frame, and the moon's is what its light asks for.
-const SUN_ANGULAR_DIAMETER: f32 = 2_f32.to_radians();
+const SUN_ANGULAR_DIAMETER: f32 = 3_f32.to_radians();
 const MOON_ANGULAR_DIAMETER: f32 = 6_f32.to_radians();
 /// Illuminance of the moon when full, in lux: Earth's full moon gives a
 /// quarter lux from half a degree, and light goes with apparent area, so
@@ -86,7 +86,7 @@ pub struct SkyMaterial {
     #[uniform(0)]
     pub nebulae: [Vec4; 2],
     /// To the visitor, a unit vector in the world, and in `w` its radius
-    /// as a chord, none while there is no visitor.
+    /// as a chord.
     #[uniform(0)]
     pub visitor: Vec4,
     /// To the moon, a unit vector in the world, and in `w` its radius as
@@ -250,8 +250,8 @@ const SUNSET: f32 = common_bevy::systems::NIGHT.0 as f32 / 24.;
 const MOONRISE: f32 = 21. / 24.;
 const MOONSET: f32 = 7. / 24.;
 const MOON_HIGH: f32 = MOONRISE + (1. + MOONSET - MOONRISE) * (NOON - SUNRISE) / (SUNSET - SUNRISE);
-/// The visitor, the ringed giant the world goes once round in a leap
-/// season. Its lit part and its rings are a disc of their own
+/// The visitor, the ringed giant the world meets every year and goes once
+/// round in a leap season. Its lit part and its rings are a disc of their own
 /// (`GiantMaterial`); across the whole of it the sky is a deep violet by
 /// day and by night, the stars and the sun behind it hidden, so its
 /// unlit part is dark. It lights
@@ -260,8 +260,11 @@ const MOON_HIGH: f32 = MOONRISE + (1. + MOONSET - MOONRISE) * (NOON - SUNRISE) /
 /// `common_bevy::sky::visit`'s; it is drawn on the sun's own track that
 /// far behind the sun, so it meets the sun where the sun is.
 ///
-/// How wide it is at its nearest, all the while it holds the world.
-const VISITOR_WIDE: f32 = 7_f32.to_radians();
+/// How wide it is at a meeting, its nearest but for its drift through
+/// the loop it holds the world on: wider than the sun there, to cover it
+/// in a leap season with the sun drawn off, and a degree where it rounds
+/// the sun half a year on, a spot on the sun's face.
+const VISITOR_WIDE: f32 = 3.4_f32.to_radians();
 /// The share of the sky's light left with the sun wholly covered, and of
 /// the sun's halo, which stands about the dark disc.
 const ECLIPSE_SKY: f32 = 0.02;
@@ -745,17 +748,18 @@ pub fn update(
     // The sky keeps wall-clock time (`Server::wall`), whole milliseconds
     // until each fraction below. The sun keeps the clock's hour, noon at
     // 12:00; its path swings with the year's phase, and the moon's phase
-    // runs once per season. About a leap season the year the sky keeps
-    // is the visit's: where the visitor took the world, and as far on as
-    // the sun has moved among the stars since.
+    // runs once per season. The year the sky keeps is the visit's: where
+    // the world meets the visitor, and as far on as the sun has moved
+    // among the stars since, which is the year's own turning but through
+    // a leap season.
     let wall = server.wall(server.now(time.elapsed().as_millis()));
     let dtd = (wall % DAY_MS) as f32 / DAY_MS as f32;
     let dtm = (wall - Date::season_start(wall)) as f32 / SEASON_MS as f32;
-    let visit = Date::visitor(wall).map(|t| (t as f32, common_bevy::sky::visit(t as f32)));
-    let taken = 1. + VISIT_FROM as f32 / (4 * SEASON_MS) as f32;
-    let dty = visit.map_or(Date::turned(wall) as f32, |(_, visit)| taken + visit.sun);
+    let (round, taken) = Date::visitor(wall);
+    let visit = common_bevy::sky::visit(round as f32, taken);
+    let dty = VISIT_FROM as f32 / (4 * SEASON_MS) as f32 + visit.sun;
     // The sun's disc, as a share of its own, by how far off the sun is.
-    let s_near = visit.map_or(1., |(_, visit)| 1. / visit.far);
+    let s_near = 1. / visit.far;
 
     // sun
     let (mut s_light, mut s_transform, mut cascade_config) = q_sun.single_mut().expect("no result in q_sun");
@@ -765,12 +769,8 @@ pub fn update(
     let s_elevation = elevation(s_toward);
 
     // The visitor: behind the sun on the sun's track by as much of a day
-    // as it stands east of it, and as wide as it is near. It fades in
-    // over the first tenth of the season before and out over the last
-    // of the season after, where it is a speck.
-    let (v_behind, v_wide) = visit.map_or((0., 0.), |(t, visit)| {
-        (visit.east, VISITOR_WIDE * visit.near * smoothstep(-1., -0.9, t) * (1. - smoothstep(1.9, 2., t)))
-    });
+    // as it stands east of it, and as wide as it is near.
+    let (v_behind, v_wide) = (visit.east, VISITOR_WIDE * visit.near);
     let toward_of = |day: f32| toward(orbit(day, SUNRISE, NOON, SUNSET), s_tilt);
     let v_toward = toward_of(dtd - v_behind);
     let open = 1. - covered(s_toward.angle_between(v_toward), s_near * SUN_ANGULAR_DIAMETER / 2., v_wide / 2.);
@@ -919,7 +919,7 @@ pub fn update(
             // Nearer than the sun's disc, so it is drawn across it.
             transform.translation = camera + toward * disc_distance_wu() * 0.98;
             transform.scale = Vec3::splat((v_wide / VISITOR_WIDE).max(1e-4));
-            let (Some((_, visit)), Some(mut material)) = (visit, giant.and_then(|giant| giant_materials.get_mut(&giant.0))) else { continue };
+            let Some(mut material) = giant.and_then(|giant| giant_materials.get_mut(&giant.0)) else { continue };
             // The sun as the visitor has it, from where each stands.
             let light = (s_toward * visit.far - v_toward * visit.off).try_normalize().unwrap_or(Vec3::Y);
             // Its pole leans from square to the plane it and the sun move

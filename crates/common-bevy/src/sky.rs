@@ -4,9 +4,9 @@
 //! sky does: every star rises a little earlier each night, and each
 //! season has its own evening sky. The year it turns by is the four
 //! seasons' (`Date::turned`). Through a leap season the world is off its
-//! path and round the visitor ([`visit`]): the sun all but keeps its
-//! place among the stars, so a star rises at much the hour it did the
-//! night before, and it is the visitor that goes round them.
+//! path and round the visitor ([`visit`]): it is set down where it was
+//! taken, so the sun is where it was among the stars, and a star rises at
+//! much the hour it did the night before.
 //!
 //! North is −z and east +x, as `Heading` has them. A place on the sphere
 //! is a unit vector as the sky stands at midnight on the year's first
@@ -96,26 +96,32 @@ pub fn guides() -> [Vec4; GUIDES] {
 }
 
 /// The world's path round the visitor, in the world's own path round the
-/// sun as one: a circle a quarter as wide, gone round the other way in a
-/// quarter of the time, so the world keeps its pace through the whole
-/// figure of eight and only the way it bends changes.
+/// sun as one: a circle a quarter as wide, touching it, gone round the other
+/// way in a quarter of the time, so the world keeps its pace through the
+/// whole figure of eight and only the way it bends changes.
 const LOOP: f32 = 0.25;
-/// The visitor's own pace, in the world's paths' widths a season: it
-/// comes straight at the world along the world's way, stands while it
-/// holds the world, and goes on the way it was going.
-const VISITOR_PACE: f32 = 2.;
+/// How near the sun the visitor's oval comes, on the far side of the sun
+/// from its far turn, which is the middle of the world's loop.
+const NEAR: f32 = 0.15;
+/// How many seasons the visitor takes round its oval: the world's year, so
+/// it meets the world at one place every year.
+const ROUND: f32 = 4.;
+/// How many seasons about the middle of a leap season the visitor is slowed
+/// over, the year it takes the world. Wider than two, or it would stand
+/// still at the middle.
+const SLOWED: f32 = 3.;
 
-/// How the sky stands in a leap season's visit, as the world sees it.
+/// How the sky stands on the visitor's round, as the world sees it.
 #[derive(Clone, Copy, Debug)]
 pub struct Visit {
     /// How far the visitor stands east of the sun, in turns: behind it
     /// by that share of a day.
     pub east: f32,
-    /// How near the visitor is, as a share of its nearest: its width in
-    /// the sky goes by it.
+    /// How near the visitor is, as a share of its nearest at a meeting:
+    /// its width in the sky goes by it.
     pub near: f32,
-    /// How far the sun has moved on among the stars since the visitor
-    /// took the world, in turns.
+    /// How far the sun has moved on among the stars since the meeting,
+    /// in turns.
     pub sun: f32,
     /// How far off the sun is, in the year's own distance: its width
     /// goes by one over it.
@@ -127,30 +133,26 @@ pub struct Visit {
     pub bearing: f32,
 }
 
-/// The sky `t` seasons after the visitor takes the world, from the season
-/// before, through the one it holds it, to the season after
-/// (`Date::visitor`). The world's path, the visitor's and the sun lie in
-/// one plane, the sun at its middle.
+/// The sky `t` seasons from the visitor's far turn, on the round it takes
+/// the world or on one it does not (`Date::visitor`): two seasons either
+/// side of the turn, or two and a half where it takes the world. The
+/// world's path, the visitor's and the sun lie in one plane, the sun at
+/// its middle.
 ///
-/// Before, the world is on its year's path and the visitor comes
-/// head-on: a morning body drawing away from the sun, growing, and
-/// swinging round to stand opposite the sun as it takes the world. Held,
-/// the world goes once round it: the visitor goes backwards through
-/// every hour of the day, is across the sun halfway, with the sun at its
-/// furthest, and opposite it again at the end. After, the world is back
-/// on its path where it left it, and the visitor falls behind into the
-/// evening, shrinking.
-pub fn visit(t: f32) -> Visit {
-    let centre = Vec2::new(1. + LOOP, 0.);
-    let on_path = |seasons: f32| Vec2::from_angle(TAU / 4. * seasons);
-    let (world, visitor) = if t < 0. {
-        (on_path(t), centre - Vec2::Y * VISITOR_PACE * t)
-    } else if t <= 1. {
-        let (sin, cos) = (TAU * t).sin_cos();
-        (centre + LOOP * Vec2::new(-cos, sin), centre)
-    } else {
-        (on_path(t - 1.), centre - Vec2::Y * VISITOR_PACE * (t - 1.))
-    };
+/// The visitor goes round a narrow oval, the sun at one end of it, by the
+/// area law: quick past the sun and slow at its far turn, just outside the
+/// world's path. Every year it reaches that turn as the world passes
+/// inside it, and stands opposite the sun, as near as it comes. That is
+/// the meeting. The year it takes the world it comes late to its turn, a
+/// season lost smoothly across [`SLOWED`], and the world leaves its path
+/// at the meeting place, goes once round the loop the visitor is climbing
+/// through, the other way, and is set down where it left, a season on:
+/// the visitor is across the sun at the loop's middle, with the sun at
+/// its furthest. Both have lost the one season, so they meet the year
+/// after as every year. Half a year from a meeting the visitor rounds the
+/// sun, between it and the world.
+pub fn visit(t: f32, taken: bool) -> Visit {
+    let (world, visitor) = places(t, taken);
     let (to_visitor, to_sun) = (visitor - world, -world);
     Visit {
         east: (to_visitor.to_angle() - to_sun.to_angle()) / TAU,
@@ -160,6 +162,41 @@ pub fn visit(t: f32) -> Visit {
         off: to_visitor.length(),
         bearing: to_visitor.to_angle() / TAU,
     }
+}
+
+/// Where the world and the visitor are, the sun at the middle and the
+/// meeting place out along +x, at `t` as [`visit`] takes it.
+fn places(t: f32, taken: bool) -> (Vec2, Vec2) {
+    let on_path = |seasons: f32| Vec2::from_angle(TAU / 4. * seasons);
+    if !taken {
+        return (on_path(t), oval(t));
+    }
+    // The season the visitor has lost by `t`: half of it before the
+    // loop's middle and half after, and its pace never less than a third.
+    let lost = if t.abs() >= SLOWED / 2. { 0.5 * t.signum() } else { t / SLOWED + (TAU * t / SLOWED).sin() / TAU };
+    let world = if t.abs() <= 0.5 {
+        let (sin, cos) = (TAU * (t + 0.5)).sin_cos();
+        Vec2::new(1. + LOOP - LOOP * cos, LOOP * sin)
+    } else {
+        on_path(t - 0.5 * t.signum())
+    };
+    (world, oval(t - lost))
+}
+
+/// Where the visitor is on its oval, `seasons` of its own pace from its
+/// far turn: equal areas swept from the sun in equal times, the way the
+/// world goes round.
+fn oval(seasons: f32) -> Vec2 {
+    let (reach, near) = (1. + LOOP, NEAR);
+    let (half, squash) = ((reach + near) / 2., (reach - near) / (reach + near));
+    // Kepler's equation for the angle from the oval's middle, by Newton
+    // from a start that converges for an oval this narrow.
+    let mean = PI + TAU * seasons / ROUND;
+    let mut angle = mean + squash * mean.sin();
+    for _ in 0..12 {
+        angle -= (angle - squash * angle.sin() - mean) / (1. - squash * angle.cos());
+    }
+    -Vec2::new(half * (angle.cos() - squash), half * (1. - squash * squash).sqrt() * angle.sin())
 }
 
 /// The brightest place of the pale band, where it is widest: highest in
@@ -197,30 +234,58 @@ pub fn nebulae() -> [Vec4; 2] {
 mod tests {
     use super::*;
 
-    /// The visitor grows as it comes and stands opposite the sun as it
-    /// takes the world; it is across the sun halfway, with the sun at
-    /// its furthest; it goes one way round the sky throughout, at a pace
-    /// that never jumps; and the world is let go where it was taken.
+    fn apart(a: f32, b: f32) -> f32 {
+        ((a - b + 0.5).rem_euclid(1.) - 0.5).abs()
+    }
+
+    /// Every year the visitor stands opposite the sun at its nearest as
+    /// the world passes, and is across the sun half a year on, far off;
+    /// its place in the sky never jumps; and one round ends as the next
+    /// begins, whichever takes the world.
+    #[test]
+    fn the_visitor_meets_the_world_every_year() {
+        let meeting = visit(0., false);
+        assert!(apart(meeting.east, 0.5) < 1e-4 && (meeting.near - 1.).abs() < 1e-4 && (meeting.far - 1.).abs() < 1e-5, "{meeting:?}");
+        for (t, taken) in [(-2., false), (2., false), (-2.5, true), (2.5, true)] {
+            let (world, visitor) = places(t, taken);
+            let (ends, there) = (places(2., false), visit(t, taken));
+            assert!((world - ends.0).length() < 1e-4 && (visitor - ends.1).length() < 1e-4, "every round ends alike, at {t}");
+            assert!(apart(there.east, 0.) < 1e-3 && there.off < there.far && there.near < 0.5, "rounding the sun before it, far off: {there:?}");
+        }
+        for taken in [false, true] {
+            let reach = if taken { 2.5 } else { 2. };
+            let mut east = visit(-reach, taken).east;
+            for step in 1..=4000 {
+                let now = visit(-reach + 2. * reach * step as f32 / 4000., taken);
+                assert!(apart(now.east, east) < 0.02, "it moved {} at step {step}", apart(now.east, east));
+                assert!(now.near < 1.1, "never much nearer than at a meeting: {now:?}");
+                east = now.east;
+            }
+        }
+    }
+
+    /// The year it takes the world: the world leaves its path where they
+    /// meet and is set down there a season on, the sun where it was among
+    /// the stars; the visitor is across the sun halfway, with the sun at
+    /// its furthest; it stays near all the while and never stands still.
     #[test]
     fn the_visitor_takes_the_world_once_round_it() {
-        let apart = |a: f32, b: f32| ((a - b + 0.5).rem_euclid(1.) - 0.5).abs();
-        for (t, east) in [(0., 0.5), (0.5, 0.), (1., 0.5)] {
-            assert!(apart(visit(t).east, east) < 1e-4, "at {t}: {:?}", visit(t));
-            assert!(visit(t).sun.abs() < 1e-4 || t == 1., "the sun is where it was among the stars at {t}");
+        let (taken, across, let_go) = (visit(-0.5, true), visit(0., true), visit(0.5, true));
+        for seen in [taken, across, let_go] {
+            assert!(seen.sun.abs() < 1e-4, "the sun is where it was among the stars: {seen:?}");
         }
-        assert!((visit(0.5).far - (1. + 2. * LOOP)).abs() < 1e-5 && (visit(0.).far - 1.).abs() < 1e-5);
-        assert!(visit(0.25).sun > 0.01 && visit(0.75).sun < -0.01, "the sun sways on and back while the world is held");
-        let (mut near, mut east) = (0., visit(-1.).east);
+        assert!((taken.far - 1.).abs() < 1e-5 && (let_go.far - 1.).abs() < 1e-5 && (across.far - (1. + 2. * LOOP)).abs() < 1e-5);
+        assert!(apart(across.east, 0.) < 1e-4 && across.off < across.far, "across the sun halfway: {across:?}");
+        assert!(apart(taken.east, 0.5) < 0.1 && apart(let_go.east, 0.5) < 0.1, "and all but opposite it at either end");
+        assert!(visit(-0.25, true).sun > 0.01 && visit(0.25, true).sun < -0.01, "the sun sways on and back while the world is held");
+        let mut was = places(-1.5, true).1;
         for step in 1..=3000 {
-            let t = -1. + step as f32 / 1000.;
-            let now = visit(t);
-            let moved = (now.east - east + 0.5).rem_euclid(1.) - 0.5;
-            assert!(moved < 1e-5 && moved > -0.004, "at {t} it moved {moved}");
-            assert!(t > 0. || now.near >= near, "it grows as it comes");
-            assert!((0. ..=1.).contains(&t) == ((now.near - 1.).abs() < 1e-4), "and is nearest all the while it holds the world: {t}");
-            (near, east) = (now.near, now.east);
+            let t = -1.5 + step as f32 / 1000.;
+            let (_, visitor) = places(t, true);
+            assert!((visitor - was).length() > 1e-5, "the visitor never stands still: {t}");
+            assert!(t.abs() > 0.5 || visit(t, true).near > 0.8, "and is near all the while it holds the world: {t}");
+            was = visitor;
         }
-        assert!(apart(visit(-1e-4).east, visit(1e-4).east) < 1e-3 && apart(visit(1. - 1e-4).east, visit(1. + 1e-4).east) < 1e-3);
     }
 
     /// The band's core stands high in the south on the second season's
