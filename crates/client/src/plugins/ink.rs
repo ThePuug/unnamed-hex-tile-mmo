@@ -76,12 +76,16 @@ pub struct Ink;
 /// What the shader needs of the camera: its near plane, which turns the
 /// reverse-z depth into a depth along the view; the haze's density, zero
 /// without an exponential fog; and the tangents of the half field of view
-/// across and up, which turn a pixel's depth into its distance.
+/// across and up, which turn a pixel's depth into its distance; and the
+/// way up in the view's own frame with the camera's height over the sea,
+/// which turn it into how far under the sea the pixel's surface lies.
 #[derive(Component, Clone, Copy, ShaderType)]
 pub struct InkUniform {
     near: f32,
     haze: f32,
     ray: Vec2,
+    up: Vec3,
+    over_sea: f32,
 }
 
 impl SyncComponent<RenderApp> for Ink {
@@ -89,11 +93,11 @@ impl SyncComponent<RenderApp> for Ink {
 }
 
 impl ExtractComponent<RenderApp> for Ink {
-    type QueryData = (&'static Projection, Option<&'static DistanceFog>);
+    type QueryData = (&'static Projection, &'static GlobalTransform, Option<&'static DistanceFog>);
     type QueryFilter = With<Ink>;
     type Out = InkUniform;
 
-    fn extract_component((projection, fog): (&Projection, Option<&DistanceFog>)) -> Option<InkUniform> {
+    fn extract_component((projection, at, fog): (&Projection, &GlobalTransform, Option<&DistanceFog>)) -> Option<InkUniform> {
         let haze = match fog.map(|f| &f.falloff) {
             Some(&FogFalloff::Exponential { density }) => density,
             _ => 0.0,
@@ -101,7 +105,10 @@ impl ExtractComponent<RenderApp> for Ink {
         match projection {
             Projection::Perspective(p) => {
                 let up = (p.fov / 2.0).tan();
-                Some(InkUniform { near: p.near, haze, ray: Vec2::new(up * p.aspect_ratio, up) })
+                // The world's up along the view's right, up and back.
+                let world_up = Vec3::new(at.right().y, at.up().y, at.back().y);
+                let over_sea = at.translation().y - crate::plugins::water::SEA_LEVEL_Y;
+                Some(InkUniform { near: p.near, haze, ray: Vec2::new(up * p.aspect_ratio, up), up: world_up, over_sea })
             }
             _ => None,
         }
