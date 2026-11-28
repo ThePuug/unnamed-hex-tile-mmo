@@ -329,7 +329,7 @@ squared distance: `locate_within_distance(loc, 100)` searches radius 10, not
 100.
 
 **Clips.** An actor's GLB names its animations — `_tee`, `idle`, `walk`,
-`run`, `back`, `jump`, `attack`, `counter`, `chop`, `mine`, `pickup`,
+`run`, `back`, `swim`, `tread`, `jump`, `attack`, `counter`, `chop`, `mine`, `pickup`,
 `mounted`, the rider sitting its horse, and
 the four a skill plays of its own, `frenzy`, `parry`, `rattle` for a
 Feint and `disengage` for a Leap, whichever way it goes — and

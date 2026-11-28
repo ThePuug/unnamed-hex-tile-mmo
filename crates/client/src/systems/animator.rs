@@ -1,6 +1,6 @@
 //! Which of an actor's clips plays: the walk or the run while it moves,
 //! whichever its pace keeps the feet on the ground at, the idle while it
-//! stands, a one-shot over either as the server says it began a skill
+//! stands, the swim and the tread for each afloat, a one-shot over either as the server says it began a skill
 //! or swung, held until the one-shot ends, and the jump in three parts
 //! while the physics carries the actor through the air. A one-shot that
 //! declares its strike is played against the server's clock, so the blow
@@ -9,20 +9,20 @@
 use std::{ collections::HashMap, time::Duration };
 
 use bevy::{ animation::ActiveAnimation, gltf::GltfNode, prelude::* };
-use qrz::Convert;
 use serde::Deserialize;
 
 use crate::components::*;
 use common_bevy::{
-    components::{ heading::Heading, position::VisualPosition, * },
+    components::{ entity_type::{ actor::ActorIdentity, EntityType }, heading::Heading, position::{ Position, VisualPosition }, status::Status, * },
     message::{ AbilityType, Do, Event, Outcome },
     moment::Moment,
     resources::map::Map,
-    systems::movement::{ fall_time, standing_y },
+    systems::movement::{ fall_time, support_y_from, swimming },
 };
 
 /// An actor's clips, each found in its GLB by name: the rest pose, the
-/// idle, the walk and the run, then the one-shots. An actor's asset holds
+/// idle, the walk and the run, the swim and the tread afloat, then the
+/// one-shots. An actor's asset holds
 /// whichever it has; `Clips` says which.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Clip {
@@ -31,6 +31,10 @@ pub enum Clip {
     Walk,
     Run,
     Back,
+    /// Afloat and moving: a cycle that declares the water it covers.
+    Swim,
+    /// Afloat and still.
+    Tread,
     Jump,
     Attack,
     Counter,
@@ -49,8 +53,8 @@ pub enum Clip {
 }
 
 impl Clip {
-    pub const ALL: [Clip; 18] = [
-        Clip::Tee, Clip::Idle, Clip::Walk, Clip::Run, Clip::Back, Clip::Jump, Clip::Attack, Clip::Counter,
+    pub const ALL: [Clip; 20] = [
+        Clip::Tee, Clip::Idle, Clip::Walk, Clip::Run, Clip::Back, Clip::Swim, Clip::Tread, Clip::Jump, Clip::Attack, Clip::Counter,
         Clip::Frenzy, Clip::Parry, Clip::Rattle, Clip::Disengage,
         Clip::Chop, Clip::Mine, Clip::Pickup, Clip::Work, Clip::Sleep, Clip::Mounted,
     ];
@@ -61,9 +65,9 @@ impl Clip {
     /// The cycles that cover ground ahead, slowest first.
     const GAITS: [Clip; 2] = [Clip::Walk, Clip::Run];
 
-    /// Every cycle that declares the ground it covers: the gaits ahead and
-    /// the one moving back against the facing.
-    const STRIDED: [Clip; 3] = [Clip::Walk, Clip::Run, Clip::Back];
+    /// Every cycle that declares the ground it covers: the gaits ahead, the
+    /// one moving back against the facing, and the swim.
+    const STRIDED: [Clip; 4] = [Clip::Walk, Clip::Run, Clip::Back, Clip::Swim];
 
     /// The animation's name in the asset.
     pub fn name(self) -> &'static str {
@@ -73,6 +77,8 @@ impl Clip {
             Clip::Walk => "walk",
             Clip::Run => "run",
             Clip::Back => "back",
+            Clip::Swim => "swim",
+            Clip::Tread => "tread",
             Clip::Jump => "jump",
             Clip::Attack => "attack",
             Clip::Counter => "counter",
@@ -353,6 +359,14 @@ impl Clips {
         Some((self.node(Clip::Back)?, self.strides.get(&Clip::Back)?.rate(speed, scale)))
     }
 
+    /// The swim of an actor afloat covering water at `speed` under
+    /// `scale`, and its rate, where its asset has one: at the rate its
+    /// declared stride asks, else as authored. Moving back, it plays in
+    /// reverse.
+    fn swim(&self, speed: f32, scale: f32) -> Option<(AnimationNodeIndex, f32)> {
+        Some((self.node(Clip::Swim)?, self.strides.get(&Clip::Swim).map_or(1.0, |stride| stride.rate(speed, scale))))
+    }
+
     /// The gait an actor covering ground at `speed` plays under `scale`,
     /// and its rate: of the gaits with a declared stride, the one whose
     /// rate lies nearest its authored pace, `current` held until another
@@ -573,20 +587,20 @@ pub fn play_held(
 
 /// How long an actor's fall, `fallen_ms` old, has left, in seconds: it
 /// falls onto the standing level of the tile under it.
-fn time_to_land(world: Vec3, fallen_ms: f32, map: &Map) -> Option<f32> {
-    let here: qrz::Qrz = map.convert(world);
+fn time_to_land(at: Vec3, fallen_ms: f32, draft: f32, map: &Map, origin: &crate::resources::RenderOrigin) -> Option<f32> {
+    let here = origin.tile_at(map, at);
     let (floor, _) = map.get_by_qr(here.q, here.r)?;
-    Some(fall_time(world.y - standing_y(floor, map), fallen_ms) / 1000.0)
+    Some(fall_time(at.y - support_y_from(origin.tile(), at.xz(), floor, draft, map), fallen_ms) / 1000.0)
 }
 
 pub fn update(
     mut commands: Commands,
-    mut query: Query<(Entity, &AirTime, &Animates, &VisualPosition, &Heading, &Transform, Option<&mut Jumping>, Option<&crate::systems::gathering::Gathering>, Option<&crate::systems::mount::Mount>)>,
+    mut query: Query<(Entity, &AirTime, &Animates, &VisualPosition, &Heading, &Transform, Option<&mut Jumping>, Option<&crate::systems::gathering::Gathering>, Option<&crate::systems::mount::Mount>, Option<&EntityType>, Option<&Status>)>,
     mut q_anim: Query<(&mut AnimationPlayer, &mut AnimationTransitions, &Clips)>,
     map: Res<Map>,
     origin: Res<crate::resources::RenderOrigin>,
 ) {
-    for (entity, &airtime, &animates, vis_pos, &heading, transform, jumping, gathering, mount) in &mut query {
+    for (entity, &airtime, &animates, vis_pos, &heading, transform, jumping, gathering, mount, typ, status) in &mut query {
         // Entity is moving if VisualPosition is actively interpolating
         let travel = vis_pos.to - vis_pos.from;
         let is_moving = !vis_pos.is_complete() && travel.length_squared() > 0.001;
@@ -595,6 +609,11 @@ pub fn update(
         let ground_speed = if vis_pos.duration > 0.0 { travel.xz().length() / vis_pos.duration } else { 0.0 };
         // Moving against the facing plays the gait in reverse.
         let direction = if travel.xz().dot(heading.to_world_dir()) < 0.0 { -1. } else { 1. };
+        // Afloat where it is drawn, on its own body or its horse's. The
+        // drawn point is taken in the render origin's frame, exact
+        // however far out.
+        let draft = ActorIdentity::draft_of(typ, status);
+        let afloat = swimming(Position::new(origin.tile(), vis_pos.current()), draft, &map);
 
         // A rider's horse carries the gaits and the jump.
         let driven = mount.and_then(|m| m.driven()).unwrap_or(animates.0);
@@ -617,7 +636,7 @@ pub fn update(
                 }
                 // Falling, the airtime counts the fall's age below zero.
                 let to_land = airtime.step.filter(|&ms| ms <= 0)
-                    .and_then(|ms| time_to_land(origin.world(vis_pos.current()), -(ms as i32) as f32, &map));
+                    .and_then(|ms| time_to_land(vis_pos.current(), -(ms as i32) as f32, draft, &map, &origin));
                 let Some(anim) = player.animation_mut(node) else { continue };
                 if jumping.advance(anim, moments, airborne, to_land) {
                     commands.entity(entity).remove::<Jumping>();
@@ -663,10 +682,12 @@ pub fn update(
         // An actor with no jump keeps its gait in the air.
         if is_moving || (airborne && jump.is_none()) {
             let current = main.filter(|&node| clips.is_gait(node));
-            // Moving back, an actor with a gait for it plays that forward;
-            // one without plays its gait ahead in reverse.
-            let back = if direction < 0.0 { clips.back(ground_speed, transform.scale.y) } else { None };
-            let (gait, rate, direction) = match back.or_else(|| clips.gait(ground_speed, transform.scale.y, current)) {
+            // Afloat it swims, where its asset has a swim; moving back, an
+            // actor with a gait for it plays that forward, and one without
+            // plays its gait ahead, or its swim, in reverse.
+            let swim = if afloat { clips.swim(ground_speed, transform.scale.y) } else { None };
+            let back = if direction < 0.0 && swim.is_none() { clips.back(ground_speed, transform.scale.y) } else { None };
+            let (gait, rate, direction) = match swim.or(back).or_else(|| clips.gait(ground_speed, transform.scale.y, current)) {
                 Some((node, rate)) if back.is_some() => (node, rate, 1.0),
                 Some((node, rate)) => (node, rate, direction),
                 None => continue,
@@ -690,8 +711,12 @@ pub fn update(
                 };
                 anim.set_speed(speed);
             }
-        } else if main != Some(idle) {
-            transitions.play(&mut player, idle, SETTLE).set_speed(1.).repeat();
+        } else {
+            // Afloat and still it treads the water, where its asset can.
+            let rest = clips.node(Clip::Tread).filter(|_| afloat).unwrap_or(idle);
+            if main != Some(rest) {
+                transitions.play(&mut player, rest, SETTLE).set_speed(1.).repeat();
+            }
         }
     }
 }
