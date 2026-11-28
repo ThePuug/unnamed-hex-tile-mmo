@@ -96,7 +96,9 @@ mod route;
 mod top;
 mod water;
 
-use std::collections::HashSet;
+pub use water::Course;
+
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -917,6 +919,21 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let mask = Mask::new(cells.iter().filter_map(|&(i, j)| lv.idx(i, j)).filter(|&c| lv.exists[c]));
         self.ensure_routed(k, &mask);
         self.cornered(k, &mask);
+    }
+
+    /// The rivers leaving each of `cells` of level k, by its centre and its
+    /// own two corners ([`Course`]), the cells built first; none for a cell
+    /// the level does not hold.
+    pub fn courses(&self, k: usize, cells: &[(i64, i64)]) -> Vec<Vec<Course>> {
+        let lv = &self.levels[k];
+        self.request(k, cells);
+        let asked: HashMap<usize, usize> =
+            cells.iter().enumerate().filter_map(|(x, &(i, j))| lv.idx(i, j).filter(|&c| lv.exists[c]).map(|c| (c, x))).collect();
+        let mut out = vec![Vec::new(); cells.len()];
+        for (c, course) in water::courses(lv, &Mask::new(asked.keys().copied()), &self.p) {
+            out[asked[&c]].push(course);
+        }
+        out
     }
 
     /// Level k built two rings past a mask and its corners one ring past

@@ -156,6 +156,46 @@ pub(super) fn trough_edges(lv: &Level, mask: &Mask, p: &Params) -> Vec<Edge> {
         .collect()
 }
 
+/// A river's way out of a vertex, for a reader that draws it as a line: a
+/// curve through positions in tiles, and the half width of its bed along
+/// it, in tiles. The curve [`Way`] samples a bed along.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Course {
+    /// Where its river begins, at a river's head: it runs straight from
+    /// there to the curve's start.
+    pub head: Option<(f64, f64)>,
+    /// The curve's start, its control and its end: the quadratic from the
+    /// first to the third, bent toward the second.
+    pub ends: [(f64, f64); 3],
+    /// Its bed's half width over the curve's first half, and over its
+    /// second, where the river it runs into carries it on.
+    pub beds: [f64; 2],
+    /// The width of the level that draws its channel ([`drawn_at`]): the
+    /// course its water runs along is that level's, and a finer level's
+    /// course of the same river is only what it routes by.
+    pub drawn: i64,
+}
+
+/// A level's troughs over a mask as courses, each with the cell whose
+/// vertex it leaves. The mask's cells and the next two rings must be
+/// routed ([`trough_edges`]).
+pub(super) fn courses(lv: &Level, mask: &Mask, p: &Params) -> Vec<(usize, Course)> {
+    let mid = |a: (f64, f64), b: (f64, f64)| ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+    trough_edges(lv, mask, p)
+        .iter()
+        .map(|e| {
+            let (end, on) = e.next.as_ref().map_or((e.to, e.flow), |n| (mid(e.to, n.to), n.flow));
+            let course = Course {
+                head: (e.ins == 0).then_some(e.from),
+                ends: [mid(e.from, e.to), e.to, end],
+                beds: [bed(e.flow, p), bed(on, p)],
+                drawn: drawn_at(bed(e.flow, p)),
+            };
+            (e.src % lv.cap(), course)
+        })
+        .collect()
+}
+
 /// The erodibility of the rock under a vertex, its cell's.
 fn rock(lv: &Level, v: usize) -> f64 {
     let e = lv.erod.get(v % (lv.cap()));

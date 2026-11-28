@@ -61,6 +61,15 @@ impl<'g, G: Ground> Terrain<'g, G> {
         }
         at.iter().map(|&(i, j)| lv.idx(i, j).filter(|&c| lv.exists[c] && lv.built.done(c)).map(|c| cell(lv, c))).collect()
     }
+
+    /// The rivers leaving each cell of the level `w` wide at `at`
+    /// ([`Ladder::courses`]); none where the ladder has no such level.
+    pub fn courses(&self, w: i64, at: &[(i64, i64)]) -> Vec<Vec<super::Course>> {
+        match self.ladder.levels.iter().position(|l| l.w == w) {
+            Some(k) => self.ladder.courses(k, at),
+            None => vec![Vec::new(); at.len()],
+        }
+    }
 }
 
 fn cell(lv: &super::Level, c: usize) -> Cell {

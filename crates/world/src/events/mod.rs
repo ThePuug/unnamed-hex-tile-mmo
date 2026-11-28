@@ -853,6 +853,23 @@ impl Composite {
         }
     }
 
+    /// The rivers of a summary level `w` tiles wide leaving each of
+    /// `cells`, by its centre and its own two corners: each a curve through
+    /// positions in tiles and its bed's half width along it
+    /// ([`crate::ladder::Course`]), what a summary draws its rivers along
+    /// at their own widths. A river crossing a cell leaves a cell beside it
+    /// too, so a cell's rivers are its own and its neighbours'. A river too
+    /// wide for the level to draw (`Course::drawn` wider than `w`) runs
+    /// along the course of the level that draws it, read at that level;
+    /// the level's own course of it is not where its water lies. None
+    /// where no ladder holds the cell.
+    pub fn courses(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Vec<crate::ladder::Course>> {
+        match &self.ladders {
+            Some(ladders) => ladders.courses(w, cells),
+            None => vec![Vec::new(); cells.len()],
+        }
+    }
+
     /// The cells of the level `w` tiles wide at `cells` made ready together:
     /// the summaries `w` wide, as
     /// [`SummarySource::cell`](common::summary::SummarySource::cell) reads

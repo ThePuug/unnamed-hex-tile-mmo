@@ -172,6 +172,12 @@ struct Cli {
     /// costs, and what survives it.
     #[arg(long)]
     lod: Option<u32>,
+
+    /// With `--lod`, each river of the band's level drawn along its course
+    /// at its bed's width, in place of the parts' wetness; a summary wet in
+    /// every part, a lake, is still drawn whole
+    #[arg(long)]
+    courses: bool,
 }
 
 // ── Color helpers ──
@@ -857,6 +863,30 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
         };
         wet >= 0.5
     };
+    let river = cli.courses.then(|| {
+        let own = s as i64;
+        let at: Vec<(i64, i64)> = cells.iter().map(|&(sq, sr)| (sq as i64, sr as i64)).collect();
+        let mut courses: Vec<world::ladder::Course> = composite.courses(own, &at).into_iter().flatten().filter(|c| c.drawn <= own).collect();
+        // A river too wide for the band's level runs along the course of
+        // the level that draws it: that level's cells over the view and a
+        // ring of them, where a river crossing one leaves the next.
+        let mut wide = own * 3;
+        while wide <= 729 {
+            let mut over: std::collections::HashSet<(i64, i64)> = std::collections::HashSet::new();
+            for &(i, j) in &at {
+                let (a, b) = world::ladder::geom::cube_round((i * own) as f64 / wide as f64, (j * own) as f64 / wide as f64);
+                over.extend([(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)].map(|(da, db)| (a + da, b + db)));
+            }
+            let over: Vec<(i64, i64)> = over.into_iter().collect();
+            courses.extend(composite.courses(wide, &over).into_iter().flatten().filter(|c| c.drawn == wide));
+            wide *= 3;
+        }
+        let thin = courses.iter().filter(|c| 2.0 * c.beds[0] < scale).count();
+        log::info!("Courses: {} of the level's rivers leave a summary in view, {thin} of them narrower than a pixel", courses.len());
+        river_cover(&courses, (origin_x, origin_y), w, h, scale)
+    });
+    let river = &river;
+    const WATER: (f64, f64, f64) = (0.35, 0.6, 0.9);
     (0..h)
         .into_par_iter()
         .flat_map(|py| {
@@ -864,15 +894,69 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
                 .flat_map(move |px| {
                     let (wx, wy) = (origin_x + px as f64 * scale, origin_y + py as f64 * scale);
                     let cell = summaries[&cell_of(wx, wy)];
-                    let c = match wet_at(wx, wy) {
-                        true => (0.35, 0.6, 0.9),
-                        false => canopy_color(orogen_ramp(cell.z as f64), &cell.canopy),
+                    let ground = canopy_color(orogen_ramp(cell.z as f64), &cell.canopy);
+                    let c = match river {
+                        Some(_) if cell.wet == (1 << common::summary::PARTS) - 1 => WATER,
+                        // The sea is its own plane: a river is drawn to
+                        // the shore.
+                        Some(cover) if cell.z >= 0 => lerp_rgb(ground, WATER, cover[py * w + px] as f64),
+                        Some(_) => ground,
+                        None if wet_at(wx, wy) => WATER,
+                        None => ground,
                     };
                     [(c.0 * 255.0).min(255.0) as u8, (c.1 * 255.0).min(255.0) as u8, (c.2 * 255.0).min(255.0) as u8]
                 })
                 .collect::<Vec<u8>>()
         })
         .collect()
+}
+
+/// How much of each pixel the rivers cover, from none to all of it: each
+/// course a strip its bed's width either side of its line, a pixel's share
+/// the part of its width the strip crosses, so a river narrower than a
+/// pixel fades and never breaks. `origin` is the first pixel's position and
+/// `scale` the world units to a pixel; a tile's position in tiles is a
+/// world unit a tile.
+fn river_cover(courses: &[world::ladder::Course], origin: (f64, f64), w: usize, h: usize, scale: f64) -> Vec<f32> {
+    /// Straight pieces a curve is drawn in.
+    const PIECES: usize = 16;
+    let place = |(q, r): (f64, f64)| (q + r * 0.5, r * 3f64.sqrt() / 2.0);
+    let mut cover = vec![0f32; w * h];
+    let mut strip = |a: (f64, f64), b: (f64, f64), half: f64| {
+        let reach = half + scale;
+        let px = |x: f64| (((x - origin.0) / scale).floor().max(0.0) as usize).min(w);
+        let py = |y: f64| (((y - origin.1) / scale).floor().max(0.0) as usize).min(h);
+        let (x0, x1) = (px(a.0.min(b.0) - reach), px(a.0.max(b.0) + reach + scale));
+        let (y0, y1) = (py(a.1.min(b.1) - reach), py(a.1.max(b.1) + reach + scale));
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        let len2 = dx * dx + dy * dy;
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let (wx, wy) = (origin.0 + x as f64 * scale, origin.1 + y as f64 * scale);
+                let t = if len2 > 0.0 { (((wx - a.0) * dx + (wy - a.1) * dy) / len2).clamp(0.0, 1.0) } else { 0.0 };
+                let d = (wx - a.0 - t * dx).hypot(wy - a.1 - t * dy);
+                let crossed = (d + half).min(scale / 2.0) - (d - half).max(-scale / 2.0);
+                let share = (crossed / scale).clamp(0.0, 1.0) as f32;
+                let at = &mut cover[y * w + x];
+                *at = at.max(share);
+            }
+        }
+    };
+    for course in courses {
+        let [a, b, c] = course.ends.map(place);
+        if let Some(head) = course.head {
+            strip(place(head), a, course.beds[0]);
+        }
+        let mut last = a;
+        for k in 1..=PIECES {
+            let t = k as f64 / PIECES as f64;
+            let (u, v, x) = ((1.0 - t) * (1.0 - t), 2.0 * t * (1.0 - t), t * t);
+            let point = (u * a.0 + v * b.0 + x * c.0, u * a.1 + v * b.1 + x * c.1);
+            strip(last, point, course.beds[(k > PIECES / 2) as usize]);
+            last = point;
+        }
+    }
+    cover
 }
 
 /// How steeply the ground under a pixel climbs along x and y, in z per

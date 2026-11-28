@@ -19,7 +19,7 @@ use super::{forest, lithology, motion, plates, scarp, thickening, thrusting, til
 use crate::continents::{self, SiteId};
 use crate::ladder::geom::cube_round;
 use crate::ladder::terrain::{Cell, Terrain};
-use crate::ladder::{Bounds, Ground, Ladder, Level, Params, Point};
+use crate::ladder::{Bounds, Course, Ground, Ladder, Level, Params, Point};
 use crate::hex_to_world;
 use crate::lattice::DIRECTIONS;
 
@@ -268,6 +268,27 @@ impl Ladders {
         }
         let spread = 3.0 * (w * w) as f64;
         Some((cell, (gx / spread, gy / spread)))
+    }
+
+    /// The rivers leaving each cell of the level `w` wide
+    /// ([`Ladder::courses`]), each read from the ladder of the site of its
+    /// centre tile; none over open sea.
+    pub fn courses(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Vec<Course>> {
+        let mut by: std::collections::HashMap<SiteId, Vec<usize>> = std::collections::HashMap::new();
+        for (x, &(i, j)) in cells.iter().enumerate() {
+            if let Some(id) = self.site_of((i * w) as i32, (j * w) as i32) {
+                by.entry(id).or_default().push(x);
+            }
+        }
+        let mut out = vec![Vec::new(); cells.len()];
+        for (id, at) in by {
+            let mine: Vec<(i64, i64)> = at.iter().map(|&x| cells[x]).collect();
+            let got = self.with(id, |l| l.terrain.courses(w, &mine));
+            for (x, v) in at.into_iter().zip(got) {
+                out[x] = v;
+            }
+        }
+        out
     }
 
     /// Each cell's height, the surface of the water standing over it, and

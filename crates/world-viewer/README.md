@@ -130,6 +130,13 @@ survives it. The unique summaries are the pixels' count, so
 match `--scale` and `--radius` to the band, or a fine band over a wide
 viewport is a full-resolution render.
 
+`--lod <r> --courses` draws the band's rivers as lines in place of the
+parts' wetness: each river along its course at its bed's width
+(`Composite::courses`), one narrower than a pixel fading by the share of
+the pixel it crosses, and a river too wide for the band's level along the
+course of the level that draws its channel. A summary wet in every part, a
+lake, is still drawn whole. The game draws no band this way.
+
 ## What a view may read
 
 A view of the world is one of three kinds. The `hubs` view is of no
