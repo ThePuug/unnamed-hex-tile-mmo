@@ -15,12 +15,18 @@ use bevy::{
     image::ImageSampler,
     mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology},
     pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline},
+    ecs::system::SystemParam,
     prelude::*,
     render::render_resource::{AsBindGroup, Extent3d, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError, TextureDimension, TextureFormat},
     shader::ShaderRef,
     tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task},
 };
-use common_bevy::{components::Loc, resources::map::Map, summary_mesh::MeshRegionKey};
+use common_bevy::{
+    components::{entity_type::{actor::ActorIdentity, EntityType}, position::Position, status::Status, Loc},
+    resources::map::Map,
+    summary_mesh::MeshRegionKey,
+    systems::movement::swimming,
+};
 
 use crate::{
     components::Viewed,
@@ -53,7 +59,7 @@ const CLEAR_TO: f32 = 1000.0;
 /// The spokes of the sea's disc, and how much wider each ring is than the
 /// one inside it: a ring is flat across, so the curve it stands in for
 /// sags under it by the square of its width.
-const SPOKES: u32 = 128;
+const SPOKES: u32 = 256;
 const RING_GROWTH: f32 = 1.1;
 
 /// A level ring from `inner` to `outer` about the origin, in rings each
@@ -139,6 +145,10 @@ struct Surf {
     /// texels and the depth its fullest tells, in world units.
     bed: IVec2,
     bed_told: Vec2,
+    /// The swell's waves ([`Swell`]), then each one's height and the depth
+    /// the swell deepens over.
+    waves: [Vec4; 2],
+    swell_told: Vec4,
 }
 
 impl Level {
@@ -151,8 +161,89 @@ impl Level {
             reach: Vec2::new(SHORE_LAND, SHORE_SEA),
             bed: IVec2::ZERO,
             bed_told: Vec2::new(BED_GRAIN as f32, BED_DEEPEST),
+            waves: Swell::about(TerrainOrigin::default()).waves,
+            swell_told: Vec4::new(SWELLS[0].3, SWELLS[1].3, SWELL_DEEPENS, 0.0),
         };
         Self { surf, shore, bed }
+    }
+}
+
+/// The swell's waves: each one's length from crest to crest in world
+/// units, the seconds a crest takes to pass, the bearing it travels on in
+/// degrees from x toward z, and how far it lifts the water at its crest.
+/// Small: enough that open water is felt to move. The long wave passes as
+/// often as a breaker comes in (`shaders/sea.wesl`).
+const SWELLS: [(f32, f32, f32, f32); 2] = [(36.0, 6.0, 20.0, 0.2), (23.0, 4.7, 48.0, 0.09)];
+/// The depth of water the swell comes to two thirds of its height over,
+/// in world units: it is higher the deeper the sea, and nothing at the
+/// shore.
+const SWELL_DEEPENS: f32 = 14.0;
+
+/// The swell as it stands about the render origin: each wave's turn for a
+/// world unit along x and along z, its turn in a second, and the turn it
+/// stands at over the origin's tile, which is taken whole in doubles so a
+/// wave keeps its place however far out the origin is. The shader lifts
+/// the sea's face by these (`shaders/sea.wesl`) and [`Sea`] lifts what
+/// floats by the same rule.
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct Swell {
+    waves: [Vec4; 2],
+}
+
+impl Swell {
+    fn about(origin: TerrainOrigin) -> Self {
+        let (q, r) = (origin.tile.x as f64, origin.tile.y as f64);
+        let radius = origin.radius as f64;
+        let (x, z) = (1.5 * radius * q, 3f64.sqrt() * radius * (r + q / 2.0));
+        let waves = SWELLS.map(|(long, seconds, bearing, _)| {
+            let (sin, cos) = bearing.to_radians().sin_cos();
+            let turn = std::f32::consts::TAU / long;
+            let (along_x, along_z) = (turn * cos, turn * sin);
+            let stands = (along_x as f64 * x + along_z as f64 * z).rem_euclid(std::f64::consts::TAU);
+            Vec4::new(along_x, along_z, std::f32::consts::TAU / seconds, stands as f32)
+        });
+        Self { waves }
+    }
+
+    /// How far the swell lifts a sea standing `deep` over its bed at the
+    /// rendered point `xz`, at the shader's `time`.
+    fn lift(&self, xz: Vec2, deep: f32, time: f32) -> f32 {
+        let share = 1.0 - (-deep / SWELL_DEEPENS).exp();
+        let lifted: f32 = self.waves.iter().zip(SWELLS).map(|(wave, (.., high))| high * (wave.x * xz.x + wave.y * xz.y + wave.w - wave.z * time).sin()).sum();
+        share * lifted
+    }
+}
+
+/// The sea's surface as it is drawn, for whatever rides it: a body afloat
+/// and the camera on it.
+#[derive(SystemParam)]
+pub struct Sea<'w> {
+    bed: Res<'w, Bed>,
+    swell: Res<'w, Swell>,
+    origin: Res<'w, RenderOrigin>,
+    map: Res<'w, Map>,
+    time: Res<'w, Time>,
+}
+
+impl Sea<'_> {
+    /// How far the swell lifts the sea's surface at the rendered point
+    /// `at`, in world units; nothing where the water there stands above
+    /// the sea, which no swell crosses.
+    pub fn lift(&self, at: Vec3) -> f32 {
+        let here = self.origin.tile_at(&self.map, at);
+        if self.map.water_at(here.q, here.r).is_some_and(|surface| surface > 0) {
+            return 0.0;
+        }
+        let origin = TerrainOrigin::of(&self.origin);
+        let deep = self.bed.deep(origin, at.xz());
+        self.swell.lift(at.xz(), deep, self.time.elapsed_secs_wrapped())
+    }
+
+    /// How far the swell lifts the actor `typ` names, drawn at `at`:
+    /// [`Self::lift`] where it floats, nothing where it stands.
+    pub fn floats(&self, at: Vec3, typ: Option<&EntityType>, status: Option<&Status>) -> f32 {
+        let draft = ActorIdentity::draft_of(typ, status);
+        if swimming(Position::new(self.origin.tile(), at), draft, &self.map) { self.lift(at) } else { 0.0 }
     }
 }
 
@@ -166,6 +257,9 @@ const BED_DEEPEST: f32 = 48.0;
 /// How far the player strays from the map's centre before it is centred
 /// on them again, in tiles, and how often it is read, in seconds: ground
 /// arrives for minutes after a world is entered, and no one says when.
+/// The texels the map comes to its edge over, where it reads as the
+/// deepest.
+const BED_EDGE: f32 = 16.0;
 const BED_STRAY: i32 = 96;
 const BED_EVERY: f32 = 2.0;
 
@@ -180,8 +274,32 @@ const BED_EVERY: f32 = 2.0;
 pub struct Bed {
     map: Handle<Image>,
     centre: Option<(i32, i32)>,
+    /// The texels the map holds, for [`Bed::deep`].
+    texels: Vec<u8>,
     reading: Option<Task<((i32, i32), Vec<u8>)>>,
     read: f32,
+}
+
+impl Bed {
+    /// How deep the sea stands over the ground under the rendered point
+    /// `xz`, in world units: the map read between its texels as the
+    /// shader reads it (`column` in `shaders/sea.wesl`), the deepest it
+    /// tells before the first reading and past its edge.
+    fn deep(&self, origin: TerrainOrigin, xz: Vec2) -> f32 {
+        let Some(centre) = self.centre else { return BED_DEEPEST };
+        let q = xz.x / (1.5 * origin.radius);
+        let r = xz.y / (3f32.sqrt() * origin.radius) - 0.5 * q;
+        let size = BED_TEXELS as f32;
+        let at = (Vec2::new(q, r) + (origin.tile - IVec2::new(centre.0, centre.1)).as_vec2()) / BED_GRAIN as f32 + 0.5 * size + 0.5;
+        // A texel's reading stands at its middle.
+        let from = (at - 0.5).clamp(Vec2::ZERO, Vec2::splat(size - 1.0));
+        let (low, share) = (from.floor(), from.fract());
+        let texel = |i: f32, j: f32| self.texels[(i.min(size - 1.0) as i32 + j.min(size - 1.0) as i32 * BED_TEXELS) as usize] as f32 / 255.0;
+        let along = |j: f32| texel(low.x, j) + (texel(low.x + 1.0, j) - texel(low.x, j)) * share.x;
+        let told = along(low.y) + (along(low.y + 1.0) - along(low.y)) * share.y;
+        let inside = at.x.min(at.y).min(size - at.x).min(size - at.y);
+        BED_DEEPEST * (1.0 + (told - 1.0) * (inside / BED_EDGE).clamp(0.0, 1.0))
+    }
 }
 
 /// The bed map's texels about the tile `centre`, row by row along r: the
@@ -213,7 +331,8 @@ fn read_bed(
     if let Some(task) = &mut bed.reading {
         let Some((centre, texels)) = block_on(future::poll_once(task)) else { return };
         bed.reading = None;
-        if images.get(&bed.map).is_some_and(|image| image.data.as_ref() != Some(&texels)) {
+        if bed.texels != texels {
+            bed.texels.clone_from(&texels);
             if let Some(mut image) = images.get_mut(&bed.map) {
                 image.data = Some(texels);
             }
@@ -479,9 +598,11 @@ fn setup_water_surface(
     let mut image = Image::new_fill(size, TextureDimension::D2, &[255], TextureFormat::R8Unorm, RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD);
     image.sampler = ImageSampler::linear();
     let bed = images.add(image);
-    commands.insert_resource(Bed { map: bed.clone(), centre: None, reading: None, read: 0.0 });
+    commands.insert_resource(Bed { map: bed.clone(), centre: None, texels: vec![255; (BED_TEXELS * BED_TEXELS) as usize], reading: None, read: 0.0 });
+    commands.insert_resource(Swell::about(TerrainOrigin::default()));
 
-    let near = meshes.add(ring(0.0, CLEAR_TO, 4.0));
+    // Narrow rings near, where the swell and the breakers are seen close.
+    let near = meshes.add(ring(0.0, CLEAR_TO, 1.5));
     let far = meshes.add(ring(CLEAR_TO, water_extent(), CLEAR_TO * (RING_GROWTH - 1.0)));
 
     let clear = StandardMaterial {
@@ -529,11 +650,14 @@ fn follow_camera(
     }
 }
 
-/// Lays every water's shards from the render origin as it moves.
-fn follow_origin(origin: Res<RenderOrigin>, mut materials: ResMut<Assets<Water>>) {
+/// Lays every water's shards, and the swell, from the render origin as it
+/// moves.
+fn follow_origin(origin: Res<RenderOrigin>, mut swell: ResMut<Swell>, mut materials: ResMut<Assets<Water>>) {
     let origin = TerrainOrigin::of(&origin);
+    *swell = Swell::about(origin);
     for (_, material) in materials.iter_mut() {
         material.extension.surf.origin = origin;
+        material.extension.surf.waves = swell.waves;
     }
 }
 
@@ -553,6 +677,21 @@ mod tests {
         assert_eq!(at(-10), 0, "land stands under no sea");
         assert!(at(5) < at(20) && at(20) < at(40), "the lower the ground the deeper: {} {} {}", at(5), at(20), at(40));
         assert_eq!(at(60), 255, "ground no one holds reads as the deepest");
+    }
+
+    /// The swell keeps its place in the world through a rebase: a point
+    /// is lifted alike whichever tile the world is drawn about, and far
+    /// out as near.
+    #[test]
+    fn the_swell_holds_through_a_rebase() {
+        let place = |tile: IVec2| Vec2::new(1.5 * tile.x as f32, 3f32.sqrt() * (tile.y as f32 + tile.x as f32 / 2.0));
+        for far in [IVec2::ZERO, IVec2::new(114_000, -6_400)] {
+            let (first, second) = (far, far + IVec2::new(7, -3));
+            let at = Vec2::new(11.0, 4.5);
+            let one = Swell::about(TerrainOrigin { tile: first, radius: 1.0 }).lift(at + place(second - first), 30.0, 12.0);
+            let other = Swell::about(TerrainOrigin { tile: second, radius: 1.0 }).lift(at, 30.0, 12.0);
+            assert!((one - other).abs() < 2e-3, "about {far:?}: {one} against {other}");
+        }
     }
 
     /// Off a straight shore the map tells every tile how far it lies from

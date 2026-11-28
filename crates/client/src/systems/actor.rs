@@ -94,13 +94,16 @@ pub fn face(current: Quat, heading: Heading, turn_pace: f32, dt: f32) -> Quat {
 /// sliding round a target, toward the way it goes, so it runs round rather
 /// than sideways; the heading takes the turn back as the slide ends.
 pub fn update(
-    mut query: Query<(&Heading, &mut Transform, &VisualPosition, Option<&Displacing>, Option<&Status>), (With<Loc>, Without<DeathMarker>)>,
+    mut query: Query<(&Heading, &mut Transform, &VisualPosition, Option<&Displacing>, Option<&Status>, Option<&EntityType>), (With<Loc>, Without<DeathMarker>)>,
     time: Res<Time>,
+    sea: crate::plugins::water::Sea,
 ) {
-    for (&heading, mut transform0, vis, displacing, status) in &mut query {
+    for (&heading, mut transform0, vis, displacing, status, typ) in &mut query {
         // The visual, not the position: the same value the camera reads,
-        // whichever runs first
+        // whichever runs first. Afloat on the sea it rides the swell, as
+        // the camera does.
         let final_pos = vis.current();
+        let final_pos = final_pos + Vec3::Y * sea.floats(final_pos, typ, status);
 
         let circling = displacing.filter(|d| d.around.is_some())
             .and_then(|_| Heading::toward(vis.from, vis.to));

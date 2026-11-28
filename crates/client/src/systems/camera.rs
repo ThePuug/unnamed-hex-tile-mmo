@@ -651,19 +651,22 @@ fn clearance_step(current: f32, wanted: f32, ground: f32, dt: f32) -> f32 {
 pub fn update(
     mut state: ResMut<CameraPose>,
     mut camera: Query<(&mut Projection, &mut Transform), (With<Camera3d>, Without<CloseupCamera>)>,
-    actor: Query<(&VisualPosition, &Heading, Option<&Status>), (With<crate::components::Viewed>, Without<Camera3d>)>,
+    actor: Query<(&VisualPosition, &Heading, Option<&Status>, Option<&common_bevy::components::entity_type::EntityType>), (With<crate::components::Viewed>, Without<Camera3d>)>,
+    sea: crate::plugins::water::Sea,
     mut look: ResMut<Look>,
     map: Res<Map>,
     diagnostics: Res<DiagnosticsState>,
     time: Res<Time>,
     render_origin: Res<RenderOrigin>,
 ) {
-    let Ok((visual, &heading, status)) = actor.single() else { return };
+    let Ok((visual, &heading, status, typ)) = actor.single() else { return };
     let Ok((mut projection, mut c_transform)) = camera.single_mut() else { return };
     // The visual, not the actor's Transform: the same value the actor is
     // drawn at, whichever of the two systems runs first. Everything here is
     // in rendered coordinates; the map is read through the origin.
+    // Afloat on the sea the actor rides the swell, and the view with it.
     let feet = visual.current();
+    let feet = feet + Vec3::Y * sea.floats(feet, typ, status);
     let origin = &*render_origin;
     let eye = feet + Vec3::Y * EYE_HEIGHT;
     let dt = time.delta_secs();
