@@ -15,7 +15,9 @@ pub struct Cell {
     pub fine: f64,
     /// Water's cut below the dry ground.
     pub cut: f64,
-    /// The surface of the water standing over the cell, in levels.
+    /// The surface of the water standing over the cell, in levels: a
+    /// river's or a lake's, and the sea's, zero, over the sea
+    /// ([`super::Level::sea`]).
     pub water: Option<f64>,
     /// How far that water falls a tile along its course, in levels: a
     /// river's graded fall, and nothing over a lake or dry ground.
@@ -78,7 +80,7 @@ fn cell(lv: &super::Level, c: usize) -> Cell {
         zd: lv.zd.get(c),
         fine: lv.ground.get(c) + lv.cut.get(c),
         cut: lv.cut.get(c),
-        water: Some(lv.water.get(c)).filter(|w| !w.is_nan()),
+        water: Some(lv.water.get(c)).filter(|w| !w.is_nan()).or(lv.sea(c).then_some(0.0)),
         fall: Some(lv.wfall.get(c)).filter(|f| !f.is_nan() && !lv.water.get(c).is_nan()).unwrap_or(0.0),
         wet_parts: lv.wparts.get(c),
     }

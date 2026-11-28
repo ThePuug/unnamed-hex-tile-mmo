@@ -312,8 +312,9 @@ impl Ladders {
 /// height, the water the ladder stands over it and the slope of the
 /// level's ground; a tile's read is the tile's. Every layer above stands
 /// on the ground the game draws at the level it is read at. A tile no
-/// site's ladder holds keeps the ground beneath, open sea; a land tile
-/// that is so is a seam, counted ([`Ladders::landless`]).
+/// site's ladder holds keeps the ground beneath, open sea, with the sea
+/// standing over it at zero as it does over a ladder's; a land tile that
+/// is so is a seam, counted ([`Ladders::landless`]).
 pub struct LadderEvent {
     ladders: std::sync::Arc<Ladders>,
 }
@@ -336,8 +337,9 @@ impl WorldEvent for LadderEvent {
         let Some((cell, gradient)) = self.ladders.ground(below.w, q, r) else {
             if below.elevation >= 0.0 {
                 self.ladders.landless(q, r);
+                return None;
             }
-            return None;
+            return Some(TileOutput { water: Some(0.0), ..TileOutput::default() });
         };
         Some(TileOutput {
             elevation_delta: cell.z - below.elevation,
