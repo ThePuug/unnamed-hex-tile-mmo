@@ -12,6 +12,7 @@ use crate::components::{Displacing, RemoteMotion};
 use crate::resources::RenderOrigin;
 use common_bevy::{
     components::{
+        entity_type::{actor::ActorIdentity, EntityType},
         status::Status,
         heading::Heading,
         keybits::*,
@@ -53,7 +54,7 @@ const LOC_SETTLE_SECS: f32 = 0.125;
 pub fn predict_local_player(
     fixed_time: Res<Time<Fixed>>,
     origin: Res<RenderOrigin>,
-    mut query: Query<(&Position, &Turn, &mut Heading, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Option<&Status>), Without<Displacing>>,
+    mut query: Query<(&Position, &Turn, &mut Heading, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Option<&Status>, Option<&EntityType>), Without<Displacing>>,
     map: Res<Map>,
     nntree: Res<NNTree>,
     buffers: Res<InputQueues>,
@@ -62,10 +63,10 @@ pub fn predict_local_player(
 
     for (ent, buffer) in buffers.iter() {
         assert!(!buffer.queue.is_empty(), "Queue invariant violation: entity {ent} has empty queue");
-        let Ok((position, turn, mut heading, mut airtime, mut visual, attrs, status)) = query.get_mut(ent) else { continue; };
+        let Ok((position, turn, mut heading, mut airtime, mut visual, attrs, status, typ)) = query.get_mut(ent) else { continue; };
         let movement_speed = attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed());
 
-        let out = replayed(&buffer.queue, *position, *turn, airtime.state, movement_speed, status, &map, &nntree);
+        let out = replayed(&buffer.queue, *position, *turn, airtime.state, movement_speed, status, typ, &map, &nntree);
         if *heading != out.heading { *heading = out.heading; }
         airtime.step = out.airtime;
         let predicted = origin.render(&map, &out.position);
@@ -84,13 +85,14 @@ fn replayed(
     air: Option<i16>,
     movement_speed: f32,
     status: Option<&Status>,
+    typ: Option<&EntityType>,
     map: &Map,
     nntree: &NNTree,
 ) -> MovementOutput {
     let start = MovementOutput { position, heading: turn.heading, since_step_ms: turn.since_step_ms, airtime: air };
     queue.iter().rev().fold(start, |at, input| {
         let turn = Turn { heading: at.heading, since_step_ms: at.since_step_ms };
-        replay(input, at.position, turn, at.airtime, movement_speed, status, map, nntree)
+        replay(input, at.position, turn, at.airtime, movement_speed, status, typ, map, nntree)
     })
 }
 
@@ -100,7 +102,7 @@ fn replayed(
 /// has yet to close.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Predicted<'w, 's> {
-    player: Query<'w, 's, (Entity, &'static Position, &'static Turn, &'static AirTime, Option<&'static ActorAttributes>, Option<&'static Status>), With<common_bevy::components::Actor>>,
+    player: Query<'w, 's, (Entity, &'static Position, &'static Turn, &'static AirTime, Option<&'static ActorAttributes>, Option<&'static Status>, Option<&'static EntityType>), With<common_bevy::components::Actor>>,
     buffers: Res<'w, InputQueues>,
     map: Res<'w, Map>,
     nntree: Res<'w, NNTree>,
@@ -110,15 +112,15 @@ impl Predicted<'_, '_> {
     /// The position, in the frame of the confirmed tile, or None where
     /// there is no local player.
     pub fn position(&self) -> Option<Position> {
-        let (ent, position, turn, airtime, attrs, status) = self.player.single().ok()?;
+        let (ent, position, turn, airtime, attrs, status, typ) = self.player.single().ok()?;
         let Some(buffer) = self.buffers.get(&ent) else { return Some(*position) };
         let speed = attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed());
-        Some(replayed(&buffer.queue, *position, *turn, airtime.state, speed, status, &self.map, &self.nntree).position)
+        Some(replayed(&buffer.queue, *position, *turn, airtime.state, speed, status, typ, &self.map, &self.nntree).position)
     }
 }
 
 /// The local player's state after `input`, run from `position` with `turn`
-/// and `air` as the server runs it.
+/// and `air` as the server runs it, for the actor `typ` names.
 #[allow(clippy::too_many_arguments)]
 pub fn replay(
     input: &Event,
@@ -127,6 +129,7 @@ pub fn replay(
     mut air: Option<i16>,
     movement_speed: f32,
     status: Option<&Status>,
+    typ: Option<&EntityType>,
     map: &Map,
     nntree: &NNTree,
 ) -> MovementOutput {
@@ -146,6 +149,7 @@ pub fn replay(
         pace: Status::pace_of(status),
         turn_pace: Status::turn_pace_of(status),
         collides: true,
+        draft: ActorIdentity::draft_of(typ, status),
     }, *dt as i16, map, nntree)
 }
 
@@ -156,7 +160,7 @@ pub fn simulate_remote(
     time: Res<Time>,
     fixed_time: Res<Time<Fixed>>,
     origin: Res<RenderOrigin>,
-    mut query: Query<(Entity, &mut RemoteMotion, &Heading, &mut Position, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Option<&Status>, Option<&common_bevy::components::entity_type::EntityType>), Without<Displacing>>,
+    mut query: Query<(Entity, &mut RemoteMotion, &Heading, &mut Position, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Option<&Status>, Option<&EntityType>), Without<Displacing>>,
     buffers: Res<InputQueues>,
     map: Res<Map>,
     nntree: Res<NNTree>,
@@ -189,6 +193,7 @@ pub fn simulate_remote(
                 pace: identity.map_or(pace, |identity| identity.pace(pace)),
                 turn_pace: Status::turn_pace_of(status),
                 collides: player,
+                draft: ActorIdentity::draft_of(typ, status),
             }, dt as i16, &map, &nntree);
             position.offset = out.position.offset;
             airtime.state = out.airtime;

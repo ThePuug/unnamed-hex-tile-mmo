@@ -192,7 +192,7 @@ pub fn tick(
 pub fn do_confirm(
     mut reader: MessageReader<Do>,
     mut buffers: ResMut<InputQueues>,
-    mut query: Query<(&mut Position, &mut AirTime, &mut Turn, Option<&ActorAttributes>, Option<&Status>)>,
+    mut query: Query<(&mut Position, &mut AirTime, &mut Turn, Option<&ActorAttributes>, Option<&Status>, Option<&common_bevy::components::entity_type::EntityType>)>,
     map: Res<Map>,
     nntree: Res<NNTree>,
     mut corrections: ResMut<crate::systems::movement::Corrections>,
@@ -211,9 +211,9 @@ pub fn do_confirm(
         let Event::Input { seq: seq0, .. } = removed else { panic!("not input") };
         assert!(seq == seq0, "Seq mismatch: expected {seq0}, got {seq}");
 
-        if let Ok((mut pos, mut air, mut turn0, attrs, status)) = query.get_mut(ent) {
+        if let Ok((mut pos, mut air, mut turn0, attrs, status, typ)) = query.get_mut(ent) {
             let speed = attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed());
-            let predicted = crate::systems::movement::replay(&removed, *pos, *turn0, air.state, speed, status, &map, &nntree).position;
+            let predicted = crate::systems::movement::replay(&removed, *pos, *turn0, air.state, speed, status, typ, &map, &nntree).position;
             let off = map.convert(position.tile - predicted.tile) + position.offset - predicted.offset;
             corrections.furthest = corrections.furthest.max(off.length());
             *pos = *position;

@@ -33,7 +33,9 @@ use crate::{
 pub const KEYCODE_MOUNT: KeyCode = KeyCode::Slash;
 
 /// The horse's GLB, the same body under every rider.
-const HORSE: &str = "actors/horse-basic.glb";
+fn horse() -> String {
+    format!("actors/{}-basic.glb", common_bevy::components::entity_type::actor::HORSE)
+}
 
 /// The rider's joint that sits on the saddle.
 const SEAT: &str = "pelvis";
@@ -112,8 +114,8 @@ pub fn saddle(
             None if mounted => {
                 let horse = commands.spawn((
                     Name::new("mount:horse"),
-                    WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(HORSE))),
-                    Rig(asset_server.load(HORSE)),
+                    WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(horse()))),
+                    Rig(asset_server.load(horse())),
                     if hauling { Transform::from_xyz(0.0, 0.0, -DRAWN_AHEAD) } else { Transform::IDENTITY },
                     ChildOf(actor),
                 )).id();

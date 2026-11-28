@@ -203,7 +203,7 @@ pub fn apply(
     runtime: Res<combat::RunTime>,
     time: Res<Time>,
     mut buffers: ResMut<InputQueues>,
-    mut query: Query<(&mut Heading, &mut Turn, &mut Position, &mut AirTime, Option<&ActorAttributes>, Option<&RespawnTimer>, Option<&common_bevy::components::status::Status>, Option<&activation::Activating>)>,
+    mut query: Query<(&mut Heading, &mut Turn, &mut Position, &mut AirTime, Option<&ActorAttributes>, Option<&RespawnTimer>, Option<&common_bevy::components::status::Status>, Option<&activation::Activating>, Option<&common_bevy::components::entity_type::EntityType>)>,
     map: Res<Map>,
     nntree: Res<NNTree>,
 ) {
@@ -211,7 +211,7 @@ pub fn apply(
         let Do { event: Event::Input { ent, key_bits, dt, seq } } = message else { continue };
         let (ent, key_bits, dt, seq) = (*ent, *key_bits, *dt, *seq);
         let Some(buffer) = buffers.get_mut(&ent) else { continue };
-        let Ok((mut heading, mut turn, mut position, mut airtime, attrs, dead, status, activating)) = query.get_mut(ent) else { continue };
+        let Ok((mut heading, mut turn, mut position, mut airtime, attrs, dead, status, activating, typ)) = query.get_mut(ent) else { continue };
         let Some(front) = buffer.queue.front_mut() else {
             panic!("Queue invariant violation: entity {ent} has empty queue");
         };
@@ -249,6 +249,7 @@ pub fn apply(
             pace: common_bevy::components::status::Status::pace_of(status),
             turn_pace: common_bevy::components::status::Status::turn_pace_of(status),
             collides: true,
+            draft: common_bevy::components::entity_type::actor::ActorIdentity::draft_of(typ, status),
         }, dt as i16, &map, &nntree);
         let walked = key_bits.moving() && out.position.offset.xz() != position.offset.xz();
         if walked && activating.and_then(|activating| activating.0).is_some_and(|activation| activation.settled(runtime.now(&time))) {

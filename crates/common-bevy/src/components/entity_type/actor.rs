@@ -18,6 +18,9 @@ pub enum ActorIdentity {
 /// The share of a run a settler walks at, on foot or riding in.
 pub const SETTLER_PACE: f32 = 0.5;
 
+/// The body every rider sits on.
+pub const HORSE: &str = "horse";
+
 impl ActorIdentity {
     /// The pace this actor moves at where its status leaves it `status`:
     /// a settler walks at [`SETTLER_PACE`] whatever its status, its horse
@@ -28,6 +31,39 @@ impl ActorIdentity {
         match self {
             ActorIdentity::Settler => SETTLER_PACE,
             _ => status,
+        }
+    }
+
+    /// The body it is drawn with, by the stem of its rig under `actors/`:
+    /// identity decides it, the triumvirate shapes combat only. A nest has
+    /// none.
+    pub fn body(&self) -> Option<&'static str> {
+        Some(match self {
+            ActorIdentity::Player | ActorIdentity::Settler | ActorIdentity::Npc(EnemyArchetype::Defender) => "player",
+            ActorIdentity::Npc(EnemyArchetype::Berserker) => "dog",
+            ActorIdentity::Npc(EnemyArchetype::Flanker) => "sprite",
+            ActorIdentity::Npc(EnemyArchetype::Juggernaut) => "juggernaut",
+            ActorIdentity::Npc(EnemyArchetype::Skirmisher) => "grasshopper",
+            ActorIdentity::Npc(EnemyArchetype::Ambusher) => "crocodile",
+            ActorIdentity::Nest(_) => return None,
+        })
+    }
+
+    /// How deep water must stand over the ground to float this actor, in
+    /// world units: its body's waterline, or its horse's while `mounted`.
+    /// Infinite where the body declares none, which walks the bed at any
+    /// depth, as a nest's absent body does.
+    pub fn draft(&self, mounted: bool) -> f32 {
+        let body = if mounted { Some(HORSE) } else { self.body() };
+        body.and_then(common::body::waterline).unwrap_or(f32::INFINITY)
+    }
+
+    /// The draft of the actor `typ` names, under `status`
+    /// ([`ActorIdentity::draft`]); infinite for what is no actor.
+    pub fn draft_of(typ: Option<&crate::components::entity_type::EntityType>, status: Option<&crate::components::status::Status>) -> f32 {
+        match typ {
+            Some(crate::components::entity_type::EntityType::Actor(actor)) => actor.identity.draft(status.is_some_and(|s| s.mounted)),
+            _ => f32::INFINITY,
         }
     }
 

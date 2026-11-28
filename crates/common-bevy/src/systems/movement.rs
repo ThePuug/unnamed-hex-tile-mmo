@@ -173,6 +173,71 @@ pub fn surface_y_from(tile: Qrz, xz: Vec2, floor: Qrz, map: &Map) -> f32 {
     crate::surface::surface_y(xz, (floor.q, floor.r), from(own), floor_centre, |q, r| map.ground_at(q, r).map(from))
 }
 
+/// A swimmer's pace, as a share of its pace on land: water deep enough to
+/// float it is a crossing, never a road.
+pub const SWIM_PACE: f32 = 0.4;
+
+/// The water's surface over tile `(q, r)` as a height over the level of
+/// `tile`, where it is drawn (`surface::water_z`); None where it is dry.
+pub fn water_y_from(tile: Qrz, q: i32, r: i32, map: &Map) -> Option<f32> {
+    map.water_at(q, r).map(|w| (crate::surface::water_z(w) + 1.0 - tile.z as f32) * map.rise())
+}
+
+/// The height an actor whose body floats at `draft` is held at over the
+/// level of `tile`, at `xz` from that tile's centre, over `floor`: the
+/// surface, or where the water stands more than its draft over it, the
+/// water less its draft, its waterline on the water's surface. Water is a
+/// floor to a body it floats, and walked through by one it does not.
+pub fn support_y_from(tile: Qrz, xz: Vec2, floor: Qrz, draft: f32, map: &Map) -> f32 {
+    let ground = surface_y_from(tile, xz, floor, map);
+    water_y_from(tile, floor.q, floor.r, map).map_or(ground, |water| ground.max(water - draft))
+}
+
+/// The height [`support_y_from`] holds an actor at, at the world point
+/// `world_xz` over `floor`, as [`surface_y`] is to [`surface_y_from`].
+pub fn support_y(world_xz: Vec2, floor: Qrz, draft: f32, map: &Map) -> f32 {
+    let floor_centre: Vec3 = map.convert(floor);
+    floor_centre.y + support_y_from(floor, world_xz - floor_centre.xz(), floor, draft, map)
+}
+
+/// Whether the water over `floor` stands deeper than `draft` over its
+/// level, so a body that floats at `draft` swims there.
+fn floats(floor: Qrz, draft: f32, map: &Map) -> bool {
+    water_y_from(floor, floor.q, floor.r, map).is_some_and(|water| water - draft > map.rise())
+}
+
+/// Whether an actor at `position`, whose body floats at `draft`, is held up
+/// by the water there rather than the ground: it swims, and in the air it
+/// is over water that will take it back.
+pub fn swimming(position: Position, draft: f32, map: &Map) -> bool {
+    let here: Qrz = position.tile + map.convert(position.offset);
+    map.get_by_qr(here.q, here.r).is_some_and(|(floor, _)| {
+        let xz = position.offset.xz();
+        support_y_from(position.tile, xz, floor, draft, map) > surface_y_from(position.tile, xz, floor, map)
+    })
+}
+
+/// The level an actor whose body floats at `draft` stands at over `floor`,
+/// for what it may enter and where it falls: the floor's own, or where the
+/// water floats it, the highest level the water's surface covers, so a
+/// bank one level above that is climbed out onto and one two above is
+/// jumped.
+fn standing_level(floor: Qrz, draft: f32, map: &Map) -> i32 {
+    match map.water_at(floor.q, floor.r) {
+        Some(w) if floats(floor, draft, map) => floor.z.max(crate::surface::water_z(w).floor() as i32),
+        _ => floor.z,
+    }
+}
+
+/// A walker's pace through the water over `floor`, as a share of its pace
+/// on land, for a body that floats at `draft`: it eases from whole on dry
+/// ground as the water deepens over the tile's level, to [`SWIM_PACE`]
+/// where the body floats. Read for the tile, as its fullness is.
+pub fn wading(floor: Qrz, draft: f32, map: &Map) -> f32 {
+    let depth = water_y_from(floor, floor.q, floor.r, map).map_or(0.0, |water| water - map.rise());
+    1.0 - (1.0 - SWIM_PACE) * (depth / draft).clamp(0.0, 1.0)
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct MovementInput {
     pub position: Position,
@@ -203,6 +268,11 @@ pub struct MovementInput {
     /// footprints of what stands in a tile; anything else walks through
     /// them, and only a tile's own rules stop it.
     pub collides: bool,
+    /// How deep water must stand to float it, in world units
+    /// ([`ActorIdentity::draft`](crate::components::entity_type::actor::ActorIdentity::draft)):
+    /// shallower it wades, deeper it swims on the surface. Infinite for a
+    /// body that never floats.
+    pub draft: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -215,25 +285,28 @@ pub struct MovementOutput {
 
 /// Whether a step from the tile over `here_floor` may land in `next`, for an
 /// entity whose feet stand `y` over the level of `tile`, the tile its walk
-/// is measured from. Refused by a rise of more than one level unless
-/// airborne at or above its standing height, by a solid decorator with no
-/// floor, by a tile at its entity capacity, and by trees in every slot.
-/// Water never refuses a step: crossing deep water is undesigned, so it is
-/// walked as ground.
+/// is measured from, and whose body floats at `draft`. Refused by a rise of
+/// more than one level unless airborne at or above its standing height,
+/// each tile's level the one it stands at there ([`standing_level`]), by a
+/// solid decorator with no floor, by a tile at its entity capacity, and by
+/// trees in every slot. Water never refuses a step: it is waded or swum.
+#[allow(clippy::too_many_arguments)]
 pub fn is_tile_blocked(
     tile: Qrz,
     here_floor: Option<Qrz>,
     next: Qrz,
     y: f32,
     airtime: Option<i16>,
+    draft: f32,
     map: &Map,
     nntree: &NNTree,
 ) -> bool {
     let next_floor = map.get_by_qr(next.q, next.r).map(|(floor, _)| floor);
+    let level = |floor: Qrz| standing_level(floor, draft, map);
 
-    let cliff = match (here_floor, next_floor) {
-        (Some(here), Some(there)) if there.z - here.z > 1 => {
-            let standing = (there.z + 1 - tile.z) as f32 * map.rise();
+    let cliff = match (here_floor.map(level), next_floor.map(level)) {
+        (Some(here), Some(there)) if there - here > 1 => {
+            let standing = (there + 1 - tile.z) as f32 * map.rise();
             airtime.is_none() || y < standing
         }
         _ => false,
@@ -264,17 +337,20 @@ const FACES_PER_WALK: usize = 16;
 /// [`is_tile_blocked`] allows and slides along the ones it refuses: against
 /// a face only the heading's component along it is kept, so a graze keeps
 /// most of its speed, a head-on push stands, and past the face's end the
-/// heading resumes. Each tile is crossed at its own [`pace`], read at the
-/// face, so a slow tile spends the reach faster over the part of the walk
-/// inside it and the same however the walk is sliced. The faces are read
+/// heading resumes. Each tile is crossed at its own [`pace`] and its water's
+/// ([`wading`]), read at the face, so a slow tile spends the reach faster
+/// over the part of the walk inside it and the same however the walk is
+/// sliced. The faces are read
 /// with the tiles taken relative to `tile`, so the geometry is exact
 /// however far out the tile is; only the lookups name the tiles
 /// themselves. `y` is the feet's height over the level of `tile`.
 ///
 /// A grounded walk leaves the ground where it first passes into a tile
 /// more than a level below, as [`is_tile_blocked`] refuses one more than a
-/// level above: the second value is then the reach spent getting there and
-/// the surface's height at that point, the edge. The walk carries on past it.
+/// level above, each the level it stands at there: the second value is
+/// then the reach spent getting there and the height it was held at
+/// there, the edge. The walk carries on past it.
+#[allow(clippy::too_many_arguments)]
 fn walk(
     tile: Qrz,
     from: Vec2,
@@ -285,14 +361,18 @@ fn walk(
     y: f32,
     airtime: Option<i16>,
     collides: bool,
+    draft: f32,
     map: &Map,
     nntree: &NNTree,
 ) -> (Vec2, Option<(f32, f32)>) {
     let footprints = |here: Qrz| if collides { footprints(tile, here, map) } else { Vec::new() };
     let drops = |from: Option<Qrz>, to: Option<Qrz>| match (from, to) {
-        (Some(from), Some(to)) => from.z - to.z > 1,
+        (Some(from), Some(to)) => standing_level(from, draft, map) - standing_level(to, draft, map) > 1,
         (Some(_), None) => true,
         (None, _) => false,
+    };
+    let pace_of = |floor: Option<Qrz>, q: i32, r: i32| {
+        pace(map.cover_at(q, r).fullness()) * floor.map_or(1.0, |floor| wading(floor, draft, map))
     };
     let mut leaves = None;
     let mut pos = from;
@@ -301,7 +381,7 @@ fn walk(
     // Speed along `dir` as a fraction of full: the cosine of the incidence
     // while sliding, so a slide spends `left` faster than it covers ground.
     let mut rate = 1.0;
-    let mut pace_here = pace(map.cover_at(here.q, here.r).fullness());
+    let mut pace_here = pace_of(floor, here.q, here.r);
     let mut about = footprints(here);
     for _ in 0..FACES_PER_WALK {
         let (to_face, next) = map.exit(pos, dir, here - tile);
@@ -328,18 +408,18 @@ fn walk(
             let at = Qrz { q: tile.q + rel.q, r: tile.r + rel.r, z: here.z };
             if (at.q, at.r) != (here.q, here.r) {
                 // Round into a tile it may not enter, it stands at the contact.
-                if is_tile_blocked(tile, floor, at, y, airtime, map, nntree) {
+                if is_tile_blocked(tile, floor, at, y, airtime, draft, map, nntree) {
                     break;
                 }
                 // Where the round passes the face is not solved for, so a
                 // round over a drop leaves the ground at the contact.
                 let at_floor = map.get_by_qr(at.q, at.r).map(|(floor, _)| floor);
                 if airtime.is_none() && leaves.is_none() && drops(floor, at_floor) {
-                    leaves = floor.map(|floor| (reach - left, surface_y_from(tile, pos, floor, map)));
+                    leaves = floor.map(|floor| (reach - left, support_y_from(tile, pos, floor, draft, map)));
                 }
                 here = at;
                 floor = at_floor;
-                pace_here = pace(map.cover_at(at.q, at.r).fullness());
+                pace_here = pace_of(floor, at.q, at.r);
                 about = footprints(here);
             }
             pos = to;
@@ -355,7 +435,7 @@ fn walk(
             pos += dir * run;
             break;
         }
-        if is_tile_blocked(tile, floor, next, y, airtime, map, nntree) {
+        if is_tile_blocked(tile, floor, next, y, airtime, draft, map, nntree) {
             let short = (to_face - FACE_MARGIN).max(0.0);
             pos += dir * short;
             left -= short / speed;
@@ -371,11 +451,11 @@ fn walk(
             left -= to_face / speed;
             let next_floor = map.get_by_qr(next.q, next.r).map(|(floor, _)| floor);
             if airtime.is_none() && leaves.is_none() && drops(floor, next_floor) {
-                leaves = floor.map(|floor| (reach - left, surface_y_from(tile, pos, floor, map)));
+                leaves = floor.map(|floor| (reach - left, support_y_from(tile, pos, floor, draft, map)));
             }
             here = next;
             floor = next_floor;
-            pace_here = pace(map.cover_at(next.q, next.r).fullness());
+            pace_here = pace_of(floor, next.q, next.r);
             about = footprints(here);
             dir = heading;
             rate = 1.0;
@@ -446,8 +526,9 @@ fn footprints(tile: Qrz, about: Qrz, map: &Map) -> Vec<(Vec2, f32)> {
 /// stands to do `activity` at slot `k` of tile `(q, r)`: on the line
 /// through what it works along the heading, as far off as the work
 /// reaches past its drawn edge, so the edge, point or fists land on it.
-/// None where the spot's tile may not be entered from the player's, or a
-/// footprint other than what it works stands in the way there.
+/// None where the spot's tile may not be entered from the player's on
+/// foot, as no gather is begun swimming, or a footprint other than what it
+/// works stands in the way there.
 #[allow(clippy::too_many_arguments)]
 pub fn stand_point(
     tile: Qrz,
@@ -473,7 +554,7 @@ pub fn stand_point(
     let at = Qrz { q: tile.q + rel.q, r: tile.r + rel.r, z: here.z };
     if (at.q, at.r) != (here.q, here.r) {
         let floor = map.get_by_qr(here.q, here.r).map(|(floor, _)| floor);
-        if is_tile_blocked(tile, floor, at, from.y, None, map, nntree) {
+        if is_tile_blocked(tile, floor, at, from.y, None, f32::INFINITY, map, nntree) {
             return None;
         }
     }
@@ -594,12 +675,13 @@ pub fn calculate_movement(
         let here: Qrz = tile + map.convert(offset);
         let floor = map.get_by_qr(here.q, here.r).map(|(floor, _)| floor);
 
-        // Over nothing, or more than a level above the ground under it, a
+        // Over nothing, or more than a level above what holds it up, a
         // grounded entity starts to fall. The ground is the surface, never
         // the tile's level: on a slope the surface stands well above it in
         // the uphill part of a tile, and a level test read there falls
         // every few ticks.
-        if airtime.is_none() && floor.map_or(true, |floor| offset.y > surface_y_from(tile, offset.xz(), floor, map) + map.rise()) {
+        let support = |floor: Qrz, offset: Vec3| support_y_from(tile, offset.xz(), floor, input.draft, map);
+        if airtime.is_none() && floor.map_or(true, |floor| offset.y > support(floor, offset) + map.rise()) {
             airtime = Some(0);
         }
 
@@ -619,7 +701,7 @@ pub fn calculate_movement(
                 let dy = -fall(-(air as i32) as f32, dt as f32);
                 air = air.saturating_sub(dt);
                 airtime = Some(air);
-                match floor.map(|floor| surface_y_from(tile, offset.xz(), floor, map)) {
+                match floor.map(|floor| support(floor, offset)) {
                     Some(ground) if offset.y + dy <= ground => {
                         offset.y = ground;
                         airtime = None;
@@ -633,7 +715,7 @@ pub fn calculate_movement(
             let per_ms = input.movement_speed * input.pace * pace;
             let step = |dt: i16| walk(
                 tile, offset.xz(), dir, per_ms * dt as f32,
-                here, floor, offset.y, airtime, input.collides, map, nntree,
+                here, floor, offset.y, airtime, input.collides, input.draft, map, nntree,
             );
             let (mut moved, leaves) = step(dt);
             if let Some((spent, edge)) = leaves {
@@ -657,7 +739,7 @@ pub fn calculate_movement(
 
         let here: Qrz = tile + map.convert(offset);
         if let Some((floor, _)) = map.get_by_qr(here.q, here.r) {
-            let ground = surface_y_from(tile, offset.xz(), floor, map);
+            let ground = support(floor, offset);
             if airtime.is_none() {
                 offset.y = ground;
             } else {
@@ -709,6 +791,7 @@ mod tests {
             pace: 1.0,
             turn_pace: 1.0,
             collides: true,
+            draft: f32::INFINITY,
         }
     }
 
@@ -1383,6 +1466,152 @@ mod tests {
         let here: Qrz = map.convert(world);
         let (floor, _) = map.get_by_qr(here.q, here.r).unwrap();
         assert!((world.y - surface_y(world.xz(), floor, &map)).abs() < 1e-5);
+    }
+
+    /// How deep the bodies in the water tests float: a little under a level.
+    const DRAFT: f32 = 1.0;
+
+    /// Flat ground at z = 0 out to `radius`, water standing at the z-level
+    /// `w` over every tile with `q` at or below `shore`, and a walker of
+    /// [`DRAFT`] standing on the ground at the centre.
+    fn lake(w: i32, shore: i32) -> (Map, NNTree, MovementInput) {
+        let map = create_test_map();
+        flat_ground(&map, 6);
+        for q in -6..=shore {
+            for r in -6..=6 {
+                map.set_water(q, r, Some(w));
+            }
+        }
+        (map, create_test_nntree(), MovementInput { draft: DRAFT, ..walking(Heading::NORTH, false) })
+    }
+
+    /// Runs `input` `ms` milliseconds in `slice` millisecond steps.
+    fn run(mut input: MovementInput, ms: i16, slice: i16, map: &Map, nntree: &NNTree) -> MovementInput {
+        for _ in 0..ms / slice {
+            let out = calculate_movement(input, slice, map, nntree);
+            input = MovementInput { airtime: out.airtime, ..carried(input, &out) };
+        }
+        input
+    }
+
+    /// Water deeper than its draft holds a body with its waterline on the
+    /// surface, and the water is its floor; water shallower is waded, the
+    /// feet on the bed.
+    #[test]
+    fn deep_water_floats_a_body_and_shallow_water_is_waded() {
+        let (map, nntree, input) = lake(3, 6);
+        let out = calculate_movement(input, 16, &map, &nntree);
+        let water = water_y_from(input.position.tile, 0, 0, &map).unwrap();
+        assert!((out.position.offset.y - (water - DRAFT)).abs() < 1e-5, "held at {}, the water at {water}", out.position.offset.y);
+        assert_eq!(out.airtime, None, "the water holds it up");
+        assert!(swimming(out.position, DRAFT, &map));
+
+        let (map, nntree, input) = lake(1, 6);
+        let out = calculate_movement(input, 16, &map, &nntree);
+        assert!(out.position.offset.y.abs() < 1e-5, "wading stands on the bed: {}", out.position.offset.y);
+        assert!(!swimming(out.position, DRAFT, &map));
+    }
+
+    /// A body that declares no draft walks the bed at any depth.
+    #[test]
+    fn a_body_that_never_floats_walks_the_bed() {
+        let (map, nntree, input) = lake(6, 6);
+        let input = MovementInput { draft: f32::INFINITY, ..input };
+        let out = calculate_movement(input, 16, &map, &nntree);
+        assert!(out.position.offset.y.abs() < 1e-5, "{}", out.position.offset.y);
+        assert!(!swimming(out.position, f32::INFINITY, &map));
+    }
+
+    /// Dry ground is walked fastest, wading slower, and swimming slowest of
+    /// all, however deep the water past its draft.
+    #[test]
+    fn the_deeper_the_water_the_slower_until_it_swims() {
+        let reach = |w: Option<i32>| {
+            let (map, nntree, input) = lake(w.unwrap_or(0), if w.is_some() { 6 } else { -7 });
+            calculate_movement(MovementInput { moving: true, ..input }, 400, &map, &nntree).position.offset.xz().length()
+        };
+        let (dry, wading, swum, deeper) = (reach(None), reach(Some(1)), reach(Some(3)), reach(Some(6)));
+        assert!(dry > wading && wading > swum, "dry {dry}, wading {wading}, swimming {swum}");
+        assert!((swum - deeper).abs() < 1e-5, "swimming deeper went {deeper}, not {swum}");
+    }
+
+    /// A swimmer jumps from the water and comes back down onto it.
+    #[test]
+    fn a_jump_from_the_water_lands_back_on_it() {
+        let (map, nntree, input) = lake(3, 6);
+        let floating = calculate_movement(input, 16, &map, &nntree);
+        let input = MovementInput { airtime: Some(JUMP_DURATION_MS), ..carried(input, &floating) };
+        let up = calculate_movement(input, JUMP_DURATION_MS, &map, &nntree);
+        assert!(up.position.offset.y > floating.position.offset.y + 1.0, "rose to {}", up.position.offset.y);
+        let down = run(MovementInput { airtime: up.airtime, ..carried(input, &up) }, 2000, 16, &map, &nntree);
+        assert_eq!(down.airtime, None, "still in the air");
+        assert!((down.position.offset.y - floating.position.offset.y).abs() < 1e-5, "came down to {}", down.position.offset.y);
+    }
+
+    /// A walk off a ledge into deep water falls onto its surface, not the
+    /// bed under it.
+    #[test]
+    fn a_fall_into_deep_water_lands_on_it() {
+        let (map, nntree, input) = ledge();
+        for q in 1..=6 {
+            for r in -3..=3 {
+                map.set_water(q, r, Some(2));
+            }
+        }
+        let input = MovementInput { draft: DRAFT, ..input };
+        let out = run(input, 2000, 16, &map, &nntree);
+        let here: Qrz = out.position.tile + map.convert(out.position.offset);
+        let water = water_y_from(out.position.tile, here.q, here.r, &map).expect("in the water");
+        assert_eq!(out.airtime, None);
+        assert!((out.position.offset.y - (water - DRAFT)).abs() < 1e-5, "landed at {}, the water at {water}", out.position.offset.y);
+    }
+
+    /// A swimmer climbs out onto a bank one level above the water's and is
+    /// held at one two above, which it jumps.
+    #[test]
+    fn a_swimmer_climbs_one_level_out_and_jumps_two() {
+        let ground = EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: false });
+        let east = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
+        let out_onto = |bank: i32, jump: bool| {
+            let (map, nntree, input) = lake(3, 0);
+            for q in 1..=6 {
+                for r in -6..=6 {
+                    map.insert(Qrz { q, r, z: bank }, ground);
+                }
+            }
+            // Floating near the bank, so a jump meets it high.
+            let near = east.to_world_dir() * 0.55;
+            let input = MovementInput { position: Position::new(input.position.tile, Vec3::new(near.x, 0.0, near.y)), ..input };
+            let input = MovementInput { airtime: None, ..carried(input, &calculate_movement(input, 16, &map, &nntree)) };
+            let input = MovementInput { heading: east, moving: true, airtime: jump.then_some(JUMP_DURATION_MS), ..input };
+            let out = run(input, 1500, 16, &map, &nntree);
+            let here: Qrz = out.position.tile + map.convert(out.position.offset);
+            here.q
+        };
+        // The water at 3 covers the level 2 and stands under 3.
+        assert!(out_onto(3, false) > 0, "never climbed a bank one level up");
+        assert_eq!(out_onto(4, false), 0, "walked up a bank two levels up");
+        assert!(out_onto(4, true) > 0, "never jumped a bank two levels up");
+    }
+
+    /// Wading into deep water and swimming on reaches the same place however
+    /// the time is sliced.
+    #[test]
+    fn swimming_is_independent_of_partition() {
+        let (map, nntree, input) = lake(2, -1);
+        for q in 0..=6 {
+            for r in -6..=6 {
+                map.set_water(q, r, Some(1));
+            }
+        }
+        let west = Heading::from_hex(Qrz { q: -1, r: 0, z: 0 });
+        let input = MovementInput { heading: west, moving: true, position: Position::at_tile(Qrz { q: 2, r: 0, z: 1 }), ..input };
+        let whole = run(input, 1000, 1000, &map, &nntree);
+        assert!(swimming(whole.position, DRAFT, &map), "never swam: {:?}", whole.position);
+        for slice in [8, 10, 20, 25, 40, 50, 125] {
+            let sliced = run(input, 1000, slice, &map, &nntree);
+            assert!((whole.position.offset - sliced.position.offset).length() < 1e-3, "{slice} ms slices: {:?}, whole: {:?}", sliced.position, whole.position);
+        }
     }
 
     fn cliff(map: &Map, q: i32, r: i32) {

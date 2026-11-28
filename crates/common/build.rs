@@ -4,12 +4,14 @@
 //! model's pieces, from their nodes (`den::MODELS`), so a model
 //! re-exported moves them on the next build; and the kit, every set and
 //! piece worn or wielded and what each seed makes of it, from the table
-//! beside the models (`kit::SETS`, `kit::PIECES`).
+//! beside the models (`kit::SETS`, `kit::PIECES`); and the waterline each
+//! body floats at, from what its swim and tread declare (`body::WATERLINES`).
 
 use std::{env, fs, path::Path};
 
 const CLIPS: &str = "../../assets/actors/player-basic.glb";
 const MODELS: &str = "../../assets/models";
+const ACTORS: &str = "../../assets/actors";
 
 /// A GLB's JSON chunk: it follows a 12-byte header and its own length and
 /// type.
@@ -154,8 +156,37 @@ fn kit() -> String {
     out
 }
 
+/// Every body's waterline, by the stem of its rig: the height of the water
+/// over its root as its swim and its tread float it, which the two must
+/// agree on. A body whose asset declares neither is left out.
+fn waterlines() -> String {
+    println!("cargo:rerun-if-changed={ACTORS}");
+    let mut bodies: Vec<(String, f32)> = fs::read_dir(ACTORS)
+        .unwrap_or_else(|error| panic!("{ACTORS}: {error}; the assets submodule must be checked out"))
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().into_string().ok()?;
+            let stem = name.strip_suffix("-basic.glb")?.to_string();
+            let path = format!("{ACTORS}/{name}");
+            let json = gltf(&path);
+            let declared = json["nodes"].as_array()?.iter().find_map(|node| node["extras"].get("animgen"))?.clone();
+            let lines: Vec<f32> = ["swim", "tread"].iter()
+                .filter_map(|clip| declared.get(*clip))
+                .map(|clip| clip["waterline"].as_f64().unwrap_or_else(|| panic!("{path}: a water clip declares no waterline")) as f32)
+                .collect();
+            let &first = lines.first()?;
+            assert!(lines.iter().all(|&line| line == first), "{path}: its swim and its tread float it at different waterlines");
+            Some((stem, first))
+        })
+        .collect();
+    bodies.sort_by(|a, b| a.0.cmp(&b.0));
+    let entries: Vec<String> = bodies.iter().map(|(stem, line)| format!("({stem:?}, {line:?})")).collect();
+    format!("pub static WATERLINES: &[(&str, f32)] = &[{}];
+", entries.join(", "))
+}
+
 fn main() {
     let out = env::var("OUT_DIR").unwrap();
+    fs::write(Path::new(&out).join("waterlines.rs"), waterlines()).unwrap();
     fs::write(Path::new(&out).join("reaches.rs"), reaches()).unwrap();
     fs::write(Path::new(&out).join("dens.rs"), dens()).unwrap();
     fs::write(Path::new(&out).join("kit.rs"), kit()).unwrap();

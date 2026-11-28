@@ -10,7 +10,7 @@ use bevy::ecs::query::QueryData;
 use qrz::Qrz;
 
 use common_bevy::{
-    components::{heading::Heading, position::Position, AirTime, Loc, Turn},
+    components::{entity_type::{actor::ActorIdentity, EntityType}, heading::Heading, position::Position, status::Status, AirTime, Loc, Turn},
     plugins::nntree::NNTree,
     resources::map::Map,
     systems::{physics::{self, Walk}, targeting::is_in_facing_cone},
@@ -76,8 +76,9 @@ pub fn hostiles_near<'a>(
 pub const LEASH_DISTANCE: i32 = 60;
 
 /// An NPC's body as its behaviour moves it: where it stands, which way it
-/// faces, the turn clock that paces its turning as a player's is paced, and
-/// its airborne state.
+/// faces, the turn clock that paces its turning as a player's is paced, its
+/// airborne state, and who it is and what it rides, which say how deep
+/// water floats it.
 #[derive(QueryData)]
 #[query_data(mutable)]
 pub struct Body {
@@ -85,6 +86,8 @@ pub struct Body {
     pub heading: &'static mut Heading,
     pub turn: &'static mut Turn,
     pub airtime: &'static mut AirTime,
+    pub typ: Option<&'static EntityType>,
+    pub status: Option<&'static Status>,
 }
 
 impl BodyItem<'_, '_> {
@@ -95,7 +98,8 @@ impl BodyItem<'_, '_> {
     /// since every change to it is sent to clients.
     #[allow(clippy::too_many_arguments)]
     pub fn steer(&mut self, goal: Heading, walk: Walk, movement_speed: f32, pace: f32, dt: i16, map: &Map, nntree: &NNTree) {
-        let (offset, airtime) = physics::steer(*self.position, &mut self.turn, goal, walk, self.airtime.state, movement_speed, pace, dt, map, nntree);
+        let draft = ActorIdentity::draft_of(self.typ, self.status);
+        let (offset, airtime) = physics::steer(*self.position, &mut self.turn, goal, walk, self.airtime.state, movement_speed, pace, draft, dt, map, nntree);
         self.position.offset = offset;
         self.airtime.state = airtime;
         if *self.heading != self.turn.heading {

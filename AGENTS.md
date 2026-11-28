@@ -560,8 +560,14 @@ that gives, takes or moves an item without one unbalances the ledger.
 and rounded once, in `Composite::water_at`: surface and ground round to the
 same steps, a surface's step covers the tiles below it and leaves the tiles
 at it dry, so a dry tile has none. `Map::water_at` holds it apart from the
-ground so either may arrive first; movement never reads it, and any water is
-walked through. Water at zero is never built: the sea is the client's one plane, and a
+ground so either may arrive first. Movement reads it as a floor to a body
+it floats: an actor is held at the ground or at the water less its draft,
+whichever is higher (`movement::support_y_from`), where it is drawn
+(`surface::water_z`); the draft is its body's waterline, which its swim and
+tread declare and `common::body` bakes (`ActorIdentity::draft`), its horse's
+while it rides. Shallower it wades the bed, slowed; deeper it swims, at
+`SWIM_PACE`, uses no skill and gathers nothing. A body declaring none walks
+the bed at any depth. Water at zero is never built: the sea is the client's one plane, and a
 channel or lake surface at zero is under it. The sea is the ocean plates'
 ground below zero (`ladder::Level::sea`), and routing floods a continent's
 ground below zero from there; a rule that takes the sea from height alone

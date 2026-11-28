@@ -14,7 +14,6 @@ use common_bevy::{
     message::{ Event, * },
     plugins::nntree::NearestNeighbor,
     resources::map::Map,
-    archetype::EnemyArchetype,
 };
 
 /// Plays an actor's scene once it is spawned: every clip its GLB holds, each
@@ -216,23 +215,11 @@ pub fn do_spawn(
 }
 
 /// The body an actor is drawn with: its rig under `actors/`, and the cut of
-/// every piece it wears under `models/`. Identity decides it; the triumvirate
-/// shapes combat only. A nest has none, and no name.
+/// every piece it wears under `models/` (`ActorIdentity::body`). A nest has
+/// none, and no name.
 pub fn actor_name(typ: EntityType) -> &'static str {
     match typ {
-        EntityType::Actor(desc) => match desc.identity {
-            ActorIdentity::Player => "player",
-            ActorIdentity::Npc(archetype) => match archetype {
-                EnemyArchetype::Berserker => "dog",
-                EnemyArchetype::Flanker => "sprite",
-                EnemyArchetype::Juggernaut => "juggernaut",
-                EnemyArchetype::Skirmisher => "grasshopper",
-                EnemyArchetype::Ambusher => "crocodile",
-                EnemyArchetype::Defender => "player",
-            }
-            ActorIdentity::Nest(_) => "",
-            ActorIdentity::Settler => "player",
-        },
+        EntityType::Actor(desc) => desc.identity.body().unwrap_or(""),
         _ => panic!("couldn't find asset for entity type {:?}", typ)
     }
 }

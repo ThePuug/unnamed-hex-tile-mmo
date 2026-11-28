@@ -51,6 +51,13 @@ pub fn height_y(z: f32) -> f32 {
     (z + 1.0) * RISE
 }
 
+/// The lattice height, for [`height_y`], that water standing at the
+/// z-level `w` is drawn at: half a step under its level, over the ground
+/// it floods, and the sea, at zero, on its plane at the shore's ground.
+pub fn water_z(w: i32) -> f32 {
+    (w as f32 - 0.5).max(0.0)
+}
+
 /// A cell's own height at a corner from the cells meeting there, in z
 /// units, the cell itself first, on a lattice `w` tiles wide: the corner
 /// rule's value at that width, through the heights the cells' ground runs
