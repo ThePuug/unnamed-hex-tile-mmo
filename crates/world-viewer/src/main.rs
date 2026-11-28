@@ -754,14 +754,24 @@ fn save(cli: &Cli, buf: &[u8], width: u32, height: u32) {
 
 // ── Colour ──────────────────────────────────────────────────────────────────
 
-/// Mirrors the terrain shader's elevation ramp, so a viewer render and the game
-/// read the same heights the same way. See `assets/shaders/terrain.wesl` for
-/// what each stop is anchored to.
+/// Mirrors the terrain shader's elevation ramp above the sea, so a viewer
+/// render and the game read the same heights the same way. See
+/// `assets/shaders/terrain.wesl` for what each stop is anchored to. Below
+/// the sea the game draws water over the same sand; a render has no water,
+/// so the sea floor wears the sea's blues, darker the deeper.
 fn orogen_ramp(z: f64) -> (f64, f64, f64) {
-    const STOPS: [(f64, (f64, f64, f64)); 14] = [
-        (-200.0, (0.039, 0.078, 0.314)),
-        (-50.0, (0.118, 0.235, 0.627)),
-        (0.0, (0.275, 0.588, 0.627)),
+    const SEA: [(f64, (f64, f64, f64)); 3] = [(-200.0, (0.039, 0.078, 0.314)), (-50.0, (0.118, 0.235, 0.627)), (0.0, (0.275, 0.588, 0.627))];
+    if z < 0.0 {
+        let (deep, shelf, shore) = (SEA[0], SEA[1], SEA[2]);
+        return if z <= deep.0 {
+            deep.1
+        } else if z < shelf.0 {
+            lerp_rgb(deep.1, shelf.1, (z - deep.0) / (shelf.0 - deep.0))
+        } else {
+            lerp_rgb(shelf.1, shore.1, (z - shelf.0) / (shore.0 - shelf.0))
+        };
+    }
+    const STOPS: [(f64, (f64, f64, f64)); 11] = [
         (5.0, (0.824, 0.784, 0.588)),
         (20.0, (0.314, 0.627, 0.314)),
         (45.0, (0.290, 0.580, 0.290)),
