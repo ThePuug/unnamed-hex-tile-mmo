@@ -220,6 +220,22 @@ impl SegmentGrid {
         }
         best
     }
+
+    /// `f` on every segment with a bucket within `reach` of a position, by
+    /// its place among the segments and its distance: one in several of
+    /// those buckets is handed over once for each.
+    pub fn each_near(&self, x: f64, y: f64, reach: f64, mut f: impl FnMut(usize, f64)) {
+        let b = self.bucket;
+        let (i0, i1) = (((x - reach) / b).floor() as i64, ((x + reach) / b).floor() as i64);
+        let (j0, j1) = (((y - reach) / b).floor() as i64, ((y + reach) / b).floor() as i64);
+        for j in j0..=j1 {
+            for i in i0..=i1 {
+                for &idx in self.cell(i, j) {
+                    f(idx as usize, self.segments[idx as usize].distance(x, y).0);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

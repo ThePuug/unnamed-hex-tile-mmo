@@ -33,10 +33,72 @@ pub const RISE: f64 = 0.674_508_516_842_426_5;
 /// the terrain shader's elevation ramp.
 pub const SEA_MAX_DEPTH: f64 = 200.0;
 
-/// Shelf profile exponent, applied to the normalised shore→abyss fraction.
-/// Greater than 1 holds the near-shore band shallow so the coastline is a
-/// wadeable beach instead of a drop-off.
-pub const SHELF_EXPONENT: f64 = 2.0;
+/// The sea floor off a coast, shore to abyss: a shoreface falling from the
+/// shoreline and easing onto the shelf, the shelf running out at a gentle
+/// grade to its edge, and the continental slope dropping from there to the
+/// abyssal plain. Depths in z-levels, lengths in world units.
+///
+/// The shoreface is what makes a shore: the floor leaves the datum at a
+/// slope a tile can show, [`SHOREFACE_DEPTH`] over the coast's own reach,
+/// so where the sea meets the land is one line at every distance it is
+/// drawn from. A floor that flattened into the shoreline put half a level
+/// of depth hundreds of tiles out, and every level of detail drew its own
+/// coast. It is wadeable for the first third of its reach and over a
+/// walker's head by the end of it.
+pub const SHOREFACE_DEPTH: f64 = 3.0;
+/// How deep the shelf's edge lies: Earth's shelf break at about 130 m, in
+/// the ratio [`SEA_MAX_DEPTH`] stands to the mean ocean's 3,700 m.
+pub const SHELF_EDGE_DEPTH: f64 = 10.0;
+/// How far the continental slope runs from the shelf's edge to the
+/// abyssal plain.
+pub const SLOPE_WIDTH: f64 = 250.0;
+
+/// A coast's own sea floor, by its margin (Inman & Nordstrom 1971): how
+/// far its shoreface runs before it eases onto the shelf, and how far out
+/// the shelf's edge lies, in world units. Where the ocean's plate goes
+/// under the continent the shelf is narrow and the shore steep; on a quiet
+/// margin the shelf is wide, and wider the longer the continent's plate
+/// has been wearing down onto it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shelf {
+    pub shoreface: f64,
+    pub width: f64,
+}
+
+impl Shelf {
+    /// The steepest shore and the narrowest shelf, a margin closing as
+    /// hard as any; the gentlest shore; and the shelf of a quiet margin
+    /// whose plate is as young as a plate is, and as old.
+    const SHOREFACE_CLOSING: f64 = 18.0;
+    const SHOREFACE_QUIET: f64 = 55.0;
+    const WIDTH_CLOSING: f64 = 60.0;
+    const WIDTH_YOUNG: f64 = 200.0;
+    const WIDTH_OLD: f64 = 500.0;
+    /// The widest any shelf lies.
+    pub const WIDEST: f64 = Self::WIDTH_OLD;
+
+    /// The shelf of a margin closing `closing` of the way to as hard as
+    /// any, none on a quiet one, off a plate of `age`, both 0 to 1.
+    pub fn of(closing: f64, age: f64) -> Self {
+        let (closing, age) = (closing.clamp(0.0, 1.0), age.clamp(0.0, 1.0));
+        let quiet = Self::WIDTH_YOUNG + (Self::WIDTH_OLD - Self::WIDTH_YOUNG) * age;
+        Shelf {
+            shoreface: Self::SHOREFACE_QUIET + (Self::SHOREFACE_CLOSING - Self::SHOREFACE_QUIET) * closing,
+            width: quiet + (Self::WIDTH_CLOSING - quiet) * closing,
+        }
+    }
+}
+
+/// How deep the sea floor lies `d` world units off a shore whose shelf is
+/// `shelf`, in z-levels: the shoreface, the shelf and the continental
+/// slope, each a term that has run its course before the next matters.
+/// Never shallower further out.
+pub fn sea_floor(d: f64, shelf: Shelf) -> f64 {
+    let shoreface = SHOREFACE_DEPTH * (1.0 - (-d / shelf.shoreface).exp());
+    let over_shelf = (SHELF_EDGE_DEPTH - SHOREFACE_DEPTH) * (d / shelf.width).clamp(0.0, 1.0);
+    let slope = (SEA_MAX_DEPTH - SHELF_EDGE_DEPTH) * smoothstep((d - shelf.width) / SLOPE_WIDTH);
+    shoreface + over_shelf + slope
+}
 
 /// Substrate elevation in z-levels a plate's interior holds — the ceiling on
 /// continental freeboard before any layer above adds relief.
@@ -48,12 +110,10 @@ pub const SHELF_EXPONENT: f64 = 2.0;
 pub const CONTINENT_MAX_RISE: f64 = SEA_MAX_DEPTH * (840.0 / 3700.0);
 
 /// Continental rise exponent, applied to the normalised shore→interior
-/// fraction. The reciprocal of [`SHELF_EXPONENT`], and load-bearing at that
-/// value: the sea branch flattens *into* the shoreline, so a land branch that
-/// also flattened into it would put a plateau at elevation 0 on both sides.
-/// The reciprocal makes land climb away from the datum as fast as the sea bed
-/// levels into it, leaving no flat band on either side.
-pub const CONTINENT_RISE_EXPONENT: f64 = 1.0 / SHELF_EXPONENT;
+/// fraction. Under one, so the land climbs steeply away from the datum and
+/// flattens toward the interior: a backshore a few levels high within a
+/// few tiles of the shore, never a plain lying at sea level.
+pub const CONTINENT_RISE_EXPONENT: f64 = 0.5;
 
 // ──── Coordinate Conversion ────
 

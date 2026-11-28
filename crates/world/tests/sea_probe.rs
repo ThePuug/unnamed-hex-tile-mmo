@@ -341,3 +341,112 @@ fn nearest_shore() {
         .min_by(|a, b| far(a.0, a.1).total_cmp(&far(b.0, b.1)));
     println!("from tile {from:?}: the nearest sea tile found is {fine:?}, {:.0} tiles off; the land beside it {land:?}, standing {:.1}", far(fine.0, fine.1), land.map_or(f64::NAN, |(q, r)| ground.height(q, r)));
 }
+
+/// The ground's height along a line of tiles through `SEA_FROM`, a tile to
+/// a column and three rows of them: how steeply it crosses the waterline.
+///
+/// Run: `SEA_FROM=q,r cargo test -p world --features inspect --test sea_probe shore_profile -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn shore_profile() {
+    let spec = std::env::var("SEA_FROM").expect("SEA_FROM names the tile");
+    let (q, r) = spec.split_once(',').expect("a tile is q,r");
+    let from: (i64, i64) = (q.trim().parse().expect("a whole q"), r.trim().parse().expect("a whole r"));
+    let ground = StackGround::new(WORLD_SEED, (from.0 as i32, from.1 as i32), 4_000.0);
+    for (name, (dq, dr)) in [("along q", (1i64, 0i64)), ("along r", (0, 1)), ("along q - r", (1, -1))] {
+        let heights: Vec<String> = (-40..=40).map(|k| format!("{:.2}", ground.height(from.0 + k * dq, from.1 + k * dr))).collect();
+        println!("{name}: {}", heights.join(" "));
+    }
+}
+
+/// Every coast within `SEA_REACH` world units of `SEA_FROM`, 40,000 and the
+/// haven by default: where its middle lies, how long it is, how hard its
+/// margin closes, its continent's plate's age, and the shelf those give it.
+///
+/// Run: `cargo test -p world --features inspect --test sea_probe coast_kinds -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn coast_kinds() {
+    use world::events::motion::resolve;
+    use world::events::thrusting::CONVERGENCE_FULL;
+    use world::tectonic::{edges_of, plates_near};
+    let from: (i32, i32) = match std::env::var("SEA_FROM") {
+        Ok(s) => {
+            let (q, r) = s.split_once(',').expect("a tile is q,r");
+            (q.trim().parse().expect("a whole q"), r.trim().parse().expect("a whole r"))
+        }
+        Err(_) => HAVEN,
+    };
+    let reach: f64 = std::env::var("SEA_REACH").ok().map_or(40_000.0, |s| s.parse().expect("a reach"));
+    let (cx, cy) = hex_to_world(from.0, from.1);
+    let mut seen = std::collections::HashSet::new();
+    let mut coasts = Vec::new();
+    for plate in plates_near(cx, cy, reach, WORLD_SEED) {
+        for edge in edges_of(plate.id, WORLD_SEED) {
+            if edge.is_coast() && seen.insert(edge.ids()) {
+                let (mx, my) = edge.mid();
+                if (mx - cx).hypot(my - cy) <= reach {
+                    coasts.push(edge);
+                }
+            }
+        }
+    }
+    coasts.sort_by(|a, b| a.mid().0.total_cmp(&b.mid().0));
+    println!("{} coasts within {reach} of tile {from:?}", coasts.len());
+    for edge in &coasts {
+        let land = if edge.a.continental { &edge.a } else { &edge.b };
+        let closing = resolve(edge, WORLD_SEED).convergence / CONVERGENCE_FULL;
+        let shelf = world::Shelf::of(closing, land.age);
+        let (q, r) = world_to_hex(edge.mid().0, edge.mid().1);
+        println!(
+            "  near tile ({q}, {r}), {:>5.0} long: closing {closing:>5.2}, plate age {:.2} -> shoreface {:>3.0}, shelf {:>5.0} wide",
+            edge.length(),
+            land.age,
+            shelf.shoreface,
+            shelf.width
+        );
+    }
+}
+
+/// The ground's height out from `SEA_FROM` along each of the six ways
+/// across the tiles, every `SEA_STEP` tiles (60 by default) for thirty
+/// steps: where a sea floor's shelf ends and how deep it lies there.
+///
+/// Run: `SEA_FROM=q,r cargo test -p world --features inspect --test sea_probe floor_out -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn floor_out() {
+    let spec = std::env::var("SEA_FROM").expect("SEA_FROM names the tile");
+    let (q, r) = spec.split_once(',').expect("a tile is q,r");
+    let from: (i64, i64) = (q.trim().parse().expect("a whole q"), r.trim().parse().expect("a whole r"));
+    let step: i64 = std::env::var("SEA_STEP").ok().map_or(60, |s| s.parse().expect("a whole step"));
+    let ground = StackGround::new(WORLD_SEED, (from.0 as i32, from.1 as i32), 8_000.0);
+    println!("at {from:?}: {:.1}; every {step} tiles", ground.height(from.0, from.1));
+    for (dq, dr) in DIRECTIONS {
+        let heights: Vec<String> = (1..=30).map(|k| format!("{:.0}", ground.height(from.0 + k * step * dq as i64, from.1 + k * step * dr as i64))).collect();
+        println!("  toward ({dq:>2}, {dr:>2}): {}", heights.join(" "));
+    }
+}
+
+/// The ground as the game builds it, through the whole stack, out from
+/// `SEA_FROM` along each of the six ways every `SEA_STEP` tiles (2 by
+/// default) for sixty steps, beside the stack's ground under the ladder:
+/// where the two part, the ladder moved the sea floor.
+///
+/// Run: `SEA_FROM=q,r cargo test -p world --features inspect --test sea_probe floor_built -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn floor_built() {
+    let spec = std::env::var("SEA_FROM").expect("SEA_FROM names the tile");
+    let (q, r) = spec.split_once(',').expect("a tile is q,r");
+    let from: (i32, i32) = (q.trim().parse().expect("a whole q"), r.trim().parse().expect("a whole r"));
+    let step: i32 = std::env::var("SEA_STEP").ok().map_or(2, |s| s.parse().expect("a whole step"));
+    let world = world::events::Composite::standard(WORLD_SEED);
+    let under = StackGround::new(WORLD_SEED, from, 8_000.0);
+    for (dq, dr) in DIRECTIONS {
+        let at = |k: i32| (from.0 + k * step * dq, from.1 + k * step * dr);
+        let built: Vec<String> = (0..60).map(|k| format!("{:.0}", world.tile_at(at(k).0, at(k).1).elevation)).collect();
+        let stack: Vec<String> = (0..60).map(|k| format!("{:.0}", under.height(at(k).0 as i64, at(k).1 as i64))).collect();
+        println!("toward ({dq:>2}, {dr:>2}) built: {}\n               stack: {}", built.join(" "), stack.join(" "));
+    }
+}

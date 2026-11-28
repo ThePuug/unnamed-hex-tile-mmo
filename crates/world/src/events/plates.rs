@@ -48,7 +48,7 @@ use crate::chains::{join_at_nodes, Segment, SegmentGrid};
 use crate::lattice::{node_world, CHAIN_SWING, NODE_SPACING};
 use crate::noise::simplex_2d;
 use crate::tectonic::{edges_of, plate_at, plates_near, Edge, PlateId, PLATE_REACH, PLATE_SPACING};
-use crate::{hex_to_world, smoothstep, world_to_hex, CONTINENT_MAX_RISE, CONTINENT_RISE_EXPONENT, SEA_MAX_DEPTH, SHELF_EXPONENT};
+use crate::{hex_to_world, sea_floor, smoothstep, world_to_hex, Shelf, CONTINENT_MAX_RISE, CONTINENT_RISE_EXPONENT, SLOPE_WIDTH};
 use super::index::{CellId, CellIndex, IndexRegistry, Located};
 use super::thrusting::OUTLINE_REACH;
 use super::{CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
@@ -211,17 +211,28 @@ impl Located for Edge {
 // ── Coasts ──────────────────────────────────────────────────────────────────
 
 /// The coasts a set of tiles can see: every coast chain's segments, facing
-/// the land, bucketed for a nearest search, read through the warp.
+/// the land, bucketed for a nearest search, read through the warp; and
+/// each coast's own shelf, by its margin and its continent's plate.
 pub struct Coasts {
     grid: SegmentGrid,
+    /// The coast each segment is a piece of, and each coast's shelf.
+    coast_of: Vec<u32>,
+    shelves: Vec<Shelf>,
     seed: u64,
 }
+
+/// How much further from a position than its nearest coast another coast
+/// may lie and still shape the sea floor there, in world units. A choice
+/// between two coasts would step the floor along the line between them, so
+/// a floor is every coast's this near, each by how near.
+const SHELF_BLEND: f64 = 300.0;
 
 impl Coasts {
     /// The coasts among a set of edges.
     pub fn new<'a>(edges: impl IntoIterator<Item = &'a Edge>, seed: u64) -> Self {
         let mut segments = Vec::new();
         let mut nodes = Vec::new();
+        let (mut coast_of, mut shelves) = (Vec::new(), Vec::new());
         for e in edges.into_iter().filter(|e| e.is_coast()) {
             let land = if e.a.continental { &e.a } else { &e.b };
             // One side per chain, read off the straight edge, so every step
@@ -230,10 +241,14 @@ impl Coasts {
             for w in e.chain.windows(2) {
                 segments.push(Segment::along(node_world(w[0]), node_world(w[1]), left));
                 nodes.push((w[0], w[1]));
+                coast_of.push(shelves.len() as u32);
             }
+            // The margin is the edge's own motion, as the belts read it.
+            let closing = super::motion::resolve(e, seed).convergence / super::thrusting::CONVERGENCE_FULL;
+            shelves.push(Shelf::of(closing, land.age));
         }
         join_at_nodes(&mut segments, &nodes);
-        Self { grid: SegmentGrid::new(segments, COAST_BUCKET), seed }
+        Self { grid: SegmentGrid::new(segments, COAST_BUCKET), coast_of, shelves, seed }
     }
 
     /// The coasts within reach of every position in a square box: what a
@@ -261,6 +276,10 @@ impl Coasts {
     /// overlap and a coast's side reads wrong.
     pub fn shore(&self, x: f64, y: f64) -> (f64, bool) {
         let (x, y) = warp(x, y, self.seed);
+        self.shore_warped(x, y)
+    }
+
+    fn shore_warped(&self, x: f64, y: f64) -> (f64, bool) {
         match self.grid.nearest(x, y, COAST_REACH) {
             Some(n) => {
                 let land = if n.distance <= CHAIN_SWING { n.side > 0.0 } else { plate_at(x, y, self.seed).continental };
@@ -268,6 +287,37 @@ impl Coasts {
             }
             None => (1.0, plate_at(x, y, self.seed).continental),
         }
+    }
+
+    /// How deep the sea floor lies at a position `distance` off its
+    /// nearest coast, in z-levels ([`sea_floor`]): by the shelf of every
+    /// coast within [`SHELF_BLEND`] of as near, each weighing the more the
+    /// nearer it is to the nearest, so the floor passes from one coast's
+    /// to the next's round a plate's corner and never steps. Past every
+    /// shelf's foot it is the abyss whichever coast is asked.
+    fn floor(&self, x: f64, y: f64, distance: f64) -> f64 {
+        if distance >= Shelf::WIDEST + SLOPE_WIDTH {
+            return sea_floor(distance, Shelf::of(0.0, 1.0));
+        }
+        // The nearest each coast comes: a handful of coasts at most.
+        let mut near: Vec<(u32, f64)> = Vec::new();
+        self.grid.each_near(x, y, distance + SHELF_BLEND, |segment, d| {
+            let coast = self.coast_of[segment];
+            match near.iter_mut().find(|(c, _)| *c == coast) {
+                Some(found) => found.1 = found.1.min(d),
+                None => near.push((coast, d)),
+            }
+        });
+        let (mut shoreface, mut width, mut weight) = (0.0, 0.0, 0.0);
+        for (coast, d) in near {
+            let w = (1.0 - (d - distance) / SHELF_BLEND).max(0.0).powi(2);
+            let shelf = self.shelves[coast as usize];
+            shoreface += w * shelf.shoreface;
+            width += w * shelf.width;
+            weight += w;
+        }
+        // The nearest coast weighs whole, so the weight is never nothing.
+        sea_floor(distance, Shelf { shoreface: shoreface / weight, width: width / weight })
     }
 
     pub fn segments(&self) -> &[Segment] {
@@ -296,17 +346,19 @@ fn interior_relief(wx: f64, wy: f64, seed: u64) -> f64 {
 ///
 /// On the land side the ground rises from the shoreline to the continental
 /// freeboard over [`COAST_REACH`] and holds, carrying the interior relief
-/// scaled by that rise; on the sea side it falls to the abyssal depth over
-/// the same reach. The shelf exponent holds the near-shore floor shallow and
-/// the land branch takes its reciprocal, so neither side flattens at the
-/// datum.
+/// scaled by that rise; on the sea side it is the sea floor that far off
+/// the shore, by the shelves of the coasts it lies off ([`Coasts::floor`]),
+/// which reaches the abyssal depth well inside the reach. Both sides leave
+/// the datum at a slope, so the shoreline is one line however coarsely the
+/// ground is read.
 pub fn substrate_on(wx: f64, wy: f64, coasts: &Coasts, seed: u64) -> f64 {
-    let (frac, land) = coasts.shore(wx, wy);
+    let (x, y) = warp(wx, wy, coasts.seed);
+    let (frac, land) = coasts.shore_warped(x, y);
     if land {
         let rise = CONTINENT_MAX_RISE * frac.powf(CONTINENT_RISE_EXPONENT);
         rise * (1.0 + RELIEF_SHARE * interior_relief(wx, wy, seed))
     } else {
-        -SEA_MAX_DEPTH * frac.powf(SHELF_EXPONENT)
+        -coasts.floor(x, y, frac * COAST_REACH)
     }
 }
 
@@ -452,12 +504,59 @@ mod tests {
                 match coasts.shore(x, y) {
                     (d, true) if d < 1.0 => { assert!(z >= 0.0, "land below the datum {z} at {d:.2} of the reach"); land += 1 }
                     (d, false) if d < 1.0 => { assert!(z <= 0.0, "sea above the datum {z} at {d:.2} of the reach"); sea += 1 }
-                    _ => assert!(z >= CONTINENT_MAX_RISE * (1.0 - RELIEF_SHARE) - 1e-9 || (z + SEA_MAX_DEPTH).abs() < 1e-9),
+                    _ => assert!(z >= CONTINENT_MAX_RISE * (1.0 - RELIEF_SHARE) - 1e-9 || (z + crate::SEA_MAX_DEPTH).abs() < 1e-9),
                 }
-                assert!(z >= -SEA_MAX_DEPTH - 1e-9 && z <= CONTINENT_MAX_RISE * (1.0 + RELIEF_SHARE) + 1e-9, "substrate {z} out of range");
+                assert!(z >= -crate::SEA_MAX_DEPTH - 1e-9 && z <= CONTINENT_MAX_RISE * (1.0 + RELIEF_SHARE) + 1e-9, "substrate {z} out of range");
             }
         }
         assert!(land > 100 && sea > 100, "{land} land, {sea} sea samples near a coast");
+    }
+
+    /// Whatever a coast's margin, its sea floor never rises further out,
+    /// and a margin closing lies as deep as a quiet one at every distance
+    /// or deeper: its shore is steeper and its shelf's edge nearer.
+    #[test]
+    fn a_sea_floor_falls_away_and_a_closing_margins_sooner() {
+        for age in [0.0, 0.5, 1.0] {
+            for (quieter, closing) in [(0.0, 0.5), (0.5, 1.0)] {
+                let (wide, narrow) = (Shelf::of(quieter, age), Shelf::of(closing, age));
+                let mut last = (0.0, 0.0);
+                for step in 0..700 {
+                    let d = step as f64 * 5.0;
+                    let now = (sea_floor(d, wide), sea_floor(d, narrow));
+                    assert!(now.0 >= last.0 - 1e-9 && now.1 >= last.1 - 1e-9, "a floor rose at {d}");
+                    assert!(now.1 >= now.0 - 1e-9, "the closing margin lies shallower at {d}: {} against {}", now.1, now.0);
+                    last = now;
+                }
+                assert!((last.0 - crate::SEA_MAX_DEPTH).abs() < 1e-6 && (last.1 - crate::SEA_MAX_DEPTH).abs() < 1e-6, "both reach the abyss");
+            }
+        }
+    }
+
+    /// The sea floor never steps: two positions a couple of units apart
+    /// lie within what the steepest floor falls in that distance, round
+    /// the corners where coasts of different margins meet as anywhere. A
+    /// floor chosen from the nearer of two coasts would step by the whole
+    /// difference between them along the line between.
+    #[test]
+    fn the_sea_floor_never_steps_between_coasts() {
+        let coasts = Coasts::in_box(0.0, 0.0, 30_000.0, S);
+        let mut sea = 0;
+        for i in 0..150 {
+            for j in 0..150 {
+                let (x, y) = (-30_000.0 + i as f64 * 400.0, -30_000.0 + j as f64 * 400.0);
+                let here = substrate_on(x, y, &coasts, S);
+                if here >= 0.0 {
+                    continue;
+                }
+                sea += 1;
+                for (dx, dy) in [(2.0, 0.0), (0.0, 2.0)] {
+                    let there = substrate_on(x + dx, y + dy, &coasts, S);
+                    assert!(there >= 0.0 || (there - here).abs() < 12.0, "the floor steps {} at ({x}, {y})", there - here);
+                }
+            }
+        }
+        assert!(sea > 1_000, "{sea} sea samples");
     }
 
     /// The gate saturates. What stands on land scaled with the substrate's
