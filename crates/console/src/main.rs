@@ -77,6 +77,11 @@ const FORGET: Duration = Duration::from_secs(30);
 const WINDOW: [f32; 2] = [1515.0, 680.0];
 
 fn main() -> eframe::Result {
+    // The server's lines share this stderr, so the console's are written as
+    // Bevy writes those. Set directly: `init` would also take every `log`
+    // line of eframe's and wgpu's.
+    tracing::subscriber::set_global_default(tracing_subscriber::fmt().with_writer(std::io::stderr).finish()).ok();
+
     let (tx, rx) = mpsc::channel::<(Kind, SocketAddr, MetricsPacket)>();
     for kind in Kind::ALL {
         let tx = tx.clone();
@@ -105,7 +110,7 @@ fn listen(kind: Kind, tx: mpsc::Sender<(Kind, SocketAddr, MetricsPacket)>) {
     let socket = match metrics::subscriber(group) {
         Ok(socket) => socket,
         Err(e) => {
-            eprintln!("cannot join {group}: {e}");
+            tracing::warn!("cannot join {group}: {e}");
             return;
         }
     };

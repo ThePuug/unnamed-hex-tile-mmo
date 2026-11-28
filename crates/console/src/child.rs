@@ -33,6 +33,8 @@ pub struct Server {
     child: Option<(Child, Option<ChildStdin>)>,
     /// Whether to start one once the one stopping is gone.
     again: bool,
+    /// When the one stopping was let go of.
+    let_go: Option<Instant>,
     /// How the last one went.
     went: Option<String>,
 }
@@ -83,6 +85,10 @@ impl Server {
                 Err(e) => self.went = Some(format!("lost: {e}")),
             }
             self.child = None;
+            // Beside the server's own lines, where its output goes
+            if let Some(let_go) = self.let_go.take() {
+                tracing::info!("the server was gone {:.1?} after it was let go of", let_go.elapsed());
+            }
             if std::mem::take(&mut self.again) {
                 self.start();
                 return self.state();
@@ -111,7 +117,9 @@ impl Server {
     pub fn stop(&mut self) {
         self.again = false;
         if let Some((_, stdin)) = &mut self.child {
-            *stdin = None;
+            if stdin.take().is_some() {
+                self.let_go = Some(Instant::now());
+            }
         }
     }
 

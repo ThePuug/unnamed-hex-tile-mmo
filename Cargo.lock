@@ -2937,6 +2937,8 @@ dependencies = [
  "eframe",
  "futures-lite",
  "sqlx",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
