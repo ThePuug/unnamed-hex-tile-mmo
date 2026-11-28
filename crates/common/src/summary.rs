@@ -206,16 +206,8 @@ pub fn summarize(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Optio
         read[i] = Some(source.sample(cq + dq, cr + dr)?);
     }
     let parts: [TileSample; PARTS] = read.map(|sample| sample.expect("every part was read"));
-    let samples = &parts[..SAMPLES];
-    let covers: [Cover; SAMPLES] = std::array::from_fn(|i| samples[i].cover);
-    let (wet, surface) = wet_parts(&parts);
-    let z = match surface {
-        Some(surface) => surface - 1,
-        None => {
-            let zs: [i32; SAMPLES] = std::array::from_fn(|i| samples[i].z);
-            select_center_z(&zs)
-        }
-    };
+    let covers: [Cover; SAMPLES] = std::array::from_fn(|i| parts[i].cover);
+    let (z, wet) = ground_of(&parts);
     Some(SummaryCell {
         z,
         fine: 0,
@@ -223,6 +215,21 @@ pub fn summarize(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Optio
         canopy: parts.map(|part| Canopy::of(part.cover)),
         outcrop: Outcrop::of(&covers),
     })
+}
+
+/// A summary's height and its wet parts from what its nine parts read: a
+/// step under its lowest water where any stands over it, else the height
+/// [`select_center_z`] takes of its seven samples.
+pub fn ground_of(parts: &[TileSample; PARTS]) -> (i32, u16) {
+    let (wet, surface) = wet_parts(parts);
+    let z = match surface {
+        Some(surface) => surface - 1,
+        None => {
+            let zs: [i32; SAMPLES] = std::array::from_fn(|i| parts[i].z);
+            select_center_z(&zs)
+        }
+    };
+    (z, wet)
 }
 
 /// Which of a summary's parts stand under water above the sea, a bit to

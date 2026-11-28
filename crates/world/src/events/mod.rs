@@ -1264,7 +1264,18 @@ impl common::summary::SummarySource for Composite {
         }
         // A summary's parts are its cell's children, in the same order
         // (`summary_parts_are_the_ladders_children`).
-        let (z, fine, water, wet) = self.level(w, &[(sq as i64, sr as i64)]).pop().flatten()?;
+        let Some((z, fine, water, wet)) = self.level(w, &[(sq as i64, sr as i64)]).pop().flatten() else {
+            // A cell no ladder holds, open sea or a shore past a site's
+            // land, is read from its parts at their own level, as its
+            // covers are: its tiles would build the ground under each.
+            let (cq, cr) = common::summary::center_tile(r, sq, sr);
+            let parts = common::summary::part_offsets(r).map(|(dq, dr)| {
+                let view = self.tile_on(w / 3, cq + dq, cr + dr);
+                common::summary::TileSample { z: view.elevation.round() as i32, water: Self::water_of(&view), cover: view.cover }
+            });
+            let (z, wet) = common::summary::ground_of(&parts);
+            return Some((common::grid::Ground::level(z), wet));
+        };
         let ground = z.round() as i32;
         let surface = water.map(|s| s.round() as i32).filter(|&s| s > ground && s > 0);
         // Under water the summary is level a step below the surface; dry,
