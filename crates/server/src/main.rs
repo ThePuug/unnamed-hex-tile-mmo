@@ -16,14 +16,25 @@ use crate::{
 };
 
 
-/// Whether the admin console let go of the server: it stops.
-static LET_GO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// When the admin console let go of the server: it stops.
+static LET_GO: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
-/// Stops the server once the console that started it lets go.
+/// When the update that stopped the server ended, whatever stopped it.
+static STOPPED: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+/// Stops the server once the console that started it lets go, saying how
+/// long the word waited for a frame to hear it.
 fn stop_when_let_go(mut exit: MessageWriter<AppExit>) {
-    if LET_GO.swap(false, std::sync::atomic::Ordering::Relaxed) {
-        warn!("the admin console let go of the server; it stops");
+    if let Some(let_go) = LET_GO.get() {
+        warn!("the admin console let go of the server {:.1?} ago; it stops", let_go.elapsed());
         exit.write(AppExit::Success);
+    }
+}
+
+/// Marks the frame the server stops on, before the store's last write.
+fn mark_stopped(mut exit: MessageReader<AppExit>) {
+    if exit.read().count() > 0 {
+        let _ = STOPPED.set(Instant::now());
     }
 }
 
@@ -41,11 +52,12 @@ fn main() {
         while std::io::stdin().read_line(&mut heard).is_ok_and(|read| read > 0) {
             heard.clear();
         }
-        LET_GO.store(true, std::sync::atomic::Ordering::Relaxed);
+        let _ = LET_GO.set(Instant::now());
     });
 
     let mut app = App::new();
     app.add_systems(Update, stop_when_let_go);
+    app.add_systems(PostUpdate, mark_stopped);
     app.add_plugins((
         // Without a wait the runner spins a core. Physics is FixedUpdate, so
         // the wait only bounds how long a Try or Do sits before Update runs.
@@ -212,5 +224,47 @@ fn main() {
     app.add_message::<crate::systems::gathering::TileChanged>();
     app.add_message::<crate::systems::economy::Moved>();
 
+    // The schedule runner's loop, and then the world freed a part at a
+    // time, saying which part took the time
+    app.set_runner(|mut app: App| {
+        while app.plugins_state() == bevy::app::PluginsState::Adding {
+            bevy::tasks::tick_global_task_pools_on_main_thread();
+        }
+        app.finish();
+        app.cleanup();
+        let wait = Duration::from_secs_f64(1.0 / 60.0);
+        let exit = loop {
+            let began = Instant::now();
+            app.update();
+            if let Some(exit) = app.should_exit() {
+                break exit;
+            }
+            if let Some(left) = wait.checked_sub(began.elapsed()) {
+                std::thread::sleep(left);
+            }
+        };
+        // Resources first: each is an entity's component, so freeing the
+        // entities first frees them all unnamed
+        let world = app.world_mut();
+        let held: Vec<_> = world.iter_resources().map(|(id, info, _)| (id, info.name().to_string())).collect();
+        for (id, name) in held {
+            let began = Instant::now();
+            world.remove_resource_by_id(id);
+            if began.elapsed() > Duration::from_millis(50) {
+                info!("teardown: {name} freed in {:.1?}", began.elapsed());
+            }
+        }
+        let began = Instant::now();
+        let entities = world.entities().len();
+        world.clear_entities();
+        info!("teardown: {entities} entities freed in {:.1?}", began.elapsed());
+        let began = Instant::now();
+        drop(app);
+        info!("teardown: the rest of the app freed in {:.1?}", began.elapsed());
+        exit
+    });
     app.run();
+    if let Some(stopped) = STOPPED.get() {
+        info!("the server came down {:.1?} after the update that stopped it", stopped.elapsed());
+    }
 }

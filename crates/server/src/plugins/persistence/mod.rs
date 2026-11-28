@@ -811,6 +811,7 @@ fn flush_at_exit(
     if exit.read().count() == 0 || keeper.rolled {
         return;
     }
+    let began = std::time::Instant::now();
     let (mut dens, mut hubs, mut camps, mut charts, mut depots) = taking.p1();
     keeper.changed_depots.extend(depots.take_changed());
     keeper.changed_dens.extend(dens.take_changed());
@@ -823,14 +824,23 @@ fn flush_at_exit(
         let result = block_on(task);
         keeper.wrote(carried, result, &mut known);
     }
+    let waited = began.elapsed();
     keeper.changed.extend(known.take_left());
     keeper.due = true;
     let (carried, batch) = keeper.batch(&taking.p0(), &playing, &known, true);
+    let gathered = began.elapsed() - waited;
     if carried.is_empty() {
+        info!("store: nothing left to write as the server stopped: {waited:.1?} on the write in flight, {gathered:.1?} gathering");
         return;
     }
-    match block_on(keeper.store.write(batch)) {
-        Ok(refused) if refused.is_empty() => info!("store: wrote {} changed tiles and {} characters as the server stopped", carried.tiles.len(), carried.characters.len()),
+    let result = block_on(keeper.store.write(batch));
+    let wrote = began.elapsed() - waited - gathered;
+    match result {
+        Ok(refused) if refused.is_empty() => info!(
+            "store: wrote {} changed tiles and {} characters as the server stopped: {waited:.1?} on the write in flight, {gathered:.1?} gathering, {wrote:.1?} writing",
+            carried.tiles.len(),
+            carried.characters.len(),
+        ),
         Ok(refused) => error!("store: the last write was refused, and what it carried is lost: {refused:?}"),
         Err(e) => error!("store: the last write failed, and what it carried is lost: {e}"),
     }
