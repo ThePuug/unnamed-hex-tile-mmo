@@ -232,6 +232,26 @@ fn boundary_color(seg: &BoundarySegment) -> [u8; 3] {
     }
 }
 
+/// The ladder's level a picture reads the world at: the widest whose cells
+/// are no wider than a pixel, the tiles where a pixel is narrower than
+/// three of them. A pixel wider than a tile shows one reading whatever is
+/// read, and reading a tile for it makes the ladder build every tile round
+/// it; the level as wide as the pixel is the same ground, built once.
+fn level_for(scale: f64) -> i64 {
+    [243, 81, 27, 9, 3].into_iter().find(|&w| w as f64 <= scale).unwrap_or(1)
+}
+
+/// The tile a position is read at on the level `level` wide: the centre of
+/// that level's cell it lies in, its own tile at the tiles.
+fn read_at(wx: f64, wy: f64, level: i64) -> (i32, i32) {
+    let (q, r) = world::world_to_hex(wx, wy);
+    if level == 1 {
+        return (q, r);
+    }
+    let (i, j) = world::ladder::geom::cube_round(q as f64 / level as f64, r as f64 / level as f64);
+    ((i * level) as i32, (j * level) as i32)
+}
+
 /// Logs how high the land in view stands: its highest tile, and the share
 /// of it above each hundred z-levels.
 fn report_heights(elevations: impl Iterator<Item = f64>) {
@@ -333,21 +353,24 @@ fn main() {
     // ~8 pixels share one hex tile, so the unique tile count ≈ w*h/64.
     // We collect unique tiles by scanning pixel positions, not by iterating
     // the full hex bounding box (which would be billions of tiles at large radii).
+    // A layer's own output is read at a tile, so the contribution view
+    // reads the tiles whatever a pixel's width.
 
     let lap = Instant::now();
+    let level = if layers.contains(&Layer::Contribution) { 1 } else { level_for(scale) };
     let mut tile_set: std::collections::HashSet<(i32, i32)> = std::collections::HashSet::new();
     for py in 0..h {
         for px in 0..w {
             let wx = origin_x + (px as f64) * scale;
             let wy = origin_y + (py as f64) * scale;
-            tile_set.insert(world::world_to_hex(wx, wy));
+            tile_set.insert(read_at(wx, wy, level));
         }
     }
 
     // The hubs view alone reads no world, and waits on none
     let alone = layers.iter().all(|&layer| layer == Layer::Hubs);
     let coords: Vec<(i32, i32)> = if alone { Vec::new() } else { tile_set.into_iter().collect() };
-    log::info!("Materializing {} unique tiles (from {}x{} pixels)...", coords.len(), w, h);
+    log::info!("Materializing {} unique cells of the level {level} wide (from {}x{} pixels)...", coords.len(), w, h);
 
     // The layer the contribution view reads, by its place in the stack.
     let contributor = layers.contains(&Layer::Contribution).then(|| {
@@ -376,11 +399,25 @@ fn main() {
                 ((q, r), (ground(&v), v.cover, delta))
             })
             .collect(),
-        None => composite
+        None if level == 1 => composite
             .tiles_at(&coords)
             .into_iter()
             .map(|((q, r), v)| ((q, r), (ground(&v), v.cover, 0.0)))
             .collect(),
+        None => {
+            // The level's cells are made ready together, then each is read
+            // standing on its own ground.
+            let cells: Vec<(i64, i64)> = coords.iter().map(|&(q, r)| (q as i64 / level, r as i64 / level)).collect();
+            composite.warm_level(level, &cells);
+            let composite = &composite;
+            coords
+                .par_iter()
+                .map(|&(q, r)| {
+                    let v = composite.tile_on(level, q, r);
+                    ((q, r), (ground(&v), v.cover, 0.0))
+                })
+                .collect()
+        }
     };
 
     let tile_secs = lap.elapsed().as_secs_f64();
@@ -407,7 +444,7 @@ fn main() {
     let heights: Vec<f64> = (0..h)
         .flat_map(|py| (0..w).map(move |px| (px, py)))
         .map(|(px, py)| {
-            let (q, r) = world::world_to_hex(origin_x + px as f64 * scale, origin_y + py as f64 * scale);
+            let (q, r) = read_at(origin_x + px as f64 * scale, origin_y + py as f64 * scale, level);
             tile_cache.get(&(q, r)).map_or(0.0, |t| t.0)
         })
         .collect();
@@ -489,7 +526,7 @@ fn main() {
                 .map(move |px| {
                     let wx = origin_x + (px as f64) * scale;
                     let wy = origin_y + (py as f64) * scale;
-                    let (q, r) = world::world_to_hex(wx, wy);
+                    let (q, r) = read_at(wx, wy, level);
 
                     let (elevation, cover, delta) = tc.get(&(q, r)).copied().unwrap_or((0.0, common::Cover::NONE, 0.0));
 
@@ -685,7 +722,7 @@ fn main() {
             }
         }
         log::info!(
-            "  legend: a hub's core filled and outlined in its hue; its reach outlined thin; influence a white wash; dotted, the core each hearth would hold alone; white dots hearths, a ringed dot each hub's centre; gold, the haven: its point, its guarded ground and, thin, its reach"
+            "  legend: a hub's core filled and outlined in its hue; its reach outlined thin; influence a white wash; dotted, the core each hearth would hold alone; white dots hearths, a ringed dot each hub's centre; gold, the haven: its point and its guarded ground"
         );
         if cli.steps {
             return;
@@ -758,18 +795,29 @@ fn save(cli: &Cli, buf: &[u8], width: u32, height: u32) {
 /// render and the game read the same heights the same way. See
 /// `assets/shaders/terrain.wesl` for what each stop is anchored to. Below
 /// the sea the game draws water over the same sand; a render has no water,
-/// so the sea floor wears the sea's blues, darker the deeper.
+/// so the sea floor wears the sea's blues by its depth: pale over the
+/// shoreface, one light blue across the shelf to its edge, and from there
+/// darker the deeper, so a coast's shelf shows as a band of its own width.
 fn orogen_ramp(z: f64) -> (f64, f64, f64) {
-    const SEA: [(f64, (f64, f64, f64)); 3] = [(-200.0, (0.039, 0.078, 0.314)), (-50.0, (0.118, 0.235, 0.627)), (0.0, (0.275, 0.588, 0.627))];
     if z < 0.0 {
-        let (deep, shelf, shore) = (SEA[0], SEA[1], SEA[2]);
-        return if z <= deep.0 {
-            deep.1
-        } else if z < shelf.0 {
-            lerp_rgb(deep.1, shelf.1, (z - deep.0) / (shelf.0 - deep.0))
-        } else {
-            lerp_rgb(shelf.1, shore.1, (z - shelf.0) / (shore.0 - shelf.0))
-        };
+        let stops = [
+            (-world::SEA_MAX_DEPTH, (0.02, 0.05, 0.22)),
+            (-4.0 * world::SHELF_EDGE_DEPTH, (0.06, 0.16, 0.45)),
+            (-1.2 * world::SHELF_EDGE_DEPTH, (0.10, 0.30, 0.62)),
+            (-world::SHELF_EDGE_DEPTH, (0.30, 0.62, 0.80)),
+            (-world::SHOREFACE_DEPTH, (0.42, 0.74, 0.84)),
+            (0.0, (0.72, 0.90, 0.88)),
+        ];
+        if z <= stops[0].0 {
+            return stops[0].1;
+        }
+        for pair in stops.windows(2) {
+            let ((a, ca), (b, cb)) = (pair[0], pair[1]);
+            if z < b {
+                return lerp_rgb(ca, cb, (z - a) / (b - a));
+            }
+        }
+        return stops[5].1;
     }
     const STOPS: [(f64, (f64, f64, f64)); 11] = [
         (5.0, (0.824, 0.784, 0.588)),

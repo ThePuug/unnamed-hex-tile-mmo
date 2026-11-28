@@ -16,6 +16,11 @@ cargo run --bin world-viewer -- --help
 
 Defaults: centre (0, 0), radius 15000 world units, 8 world units per pixel,
 QOI to `world.qoi` (`--format png` writes `world.png`), view `elevation`.
+A picture reads the world at the ladder's level as wide as a pixel, the
+widest of 243, 81, 27, 9 and 3 tiles that a pixel holds, and at the tiles
+under three to a pixel: the same ground the game draws at that distance,
+and a wide picture costs its pixels and not every tile under them. The
+`contribution` view reads the tiles whatever the scale.
 Renders made for review land under `proofs/world-viewer/` at the repo root,
 ignored by git, the way the assets repo keeps its proof sheets.
 
