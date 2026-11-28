@@ -7,9 +7,9 @@ pub const HORIZON_MARGIN_DEG: f32 = 5.0;
 /// Maximum vertical FOV for normal gameplay (60°).
 pub const MAX_GAMEPLAY_FOV: f32 = 60_f32.to_radians();
 /// Half-angle either side of the heading within which the server streams
-/// far summaries: the widest the frame reaches to either side, plus the
-/// allowance a turn gets before the far view waits on the wire. The
-/// client's widest lens must fit inside it.
+/// far summaries first, before the rest of the far view round the player:
+/// the widest the frame reaches to either side, plus the allowance a turn
+/// gets. The client's widest lens must fit inside it.
 pub const STREAM_SECTOR_HALF_ANGLE: f32 = 65_f32.to_radians();
 
 /// Camera height that keeps the frame top `HORIZON_MARGIN_DEG` below the

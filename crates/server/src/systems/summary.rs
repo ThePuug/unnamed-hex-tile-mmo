@@ -6,8 +6,8 @@ use common_bevy::{
     components::{heading::Heading, Loc},
     geometry::flat_top_tile_center,
     message::{Event, SummaryData, SummaryKey, *},
-    summary::{compute_active_bands, ladder, mesh_region_lattice, part_tiles, sampled_by, summarize, summary_lattice, SummaryCell, SummarySource, LOD_LEVELS},
-    summary_mesh::{MeshRegionKey, visible_lod_regions},
+    summary::{ladder, mesh_region_lattice, part_tiles, sampled_by, summarize, summary_lattice, SummaryCell, SummarySource, LOD_LEVELS},
+    summary_mesh::{MeshRegionKey, streamed_regions},
 };
 
 use crate::resources::event_registry::EventRegistry;
@@ -28,12 +28,13 @@ pub struct VisibleSummaryCache {
     /// again only when either changes.
     passed_for: Option<(common_bevy::chunk::ChunkId, Heading)>,
     /// Heading steps clockwise of the heading the client's camera looks
-    /// (`Event::Look`): the far view streams around the heading so turned.
+    /// (`Event::Look`): the far view streams first where the heading so
+    /// turned looks.
     look: u8,
 }
 
 impl VisibleSummaryCache {
-    /// The bearing the far view streams around for an actor heading
+    /// The bearing the far view streams first along for an actor heading
     /// `heading`: where its client's camera looks.
     fn facing(&self, heading: Heading) -> Heading {
         heading.turned(self.look as i32)
@@ -68,25 +69,10 @@ pub struct SummaryTaskQueue {
 /// Maximum in-flight async region tasks across all players.
 pub const MAX_SUMMARY_TASKS: usize = 16;
 
-/// The level whose band, and everything inside it, streams all round the
-/// player for context; beyond its outer edge only the sector around the
-/// bearing its camera looks along streams. The level past the first summary level, as far as a
-/// den is drawn (`Setting::DenSight`).
-const CONTEXT_LEVEL: u32 = LOD_LEVELS[2];
-
 /// Region rings past a band's reach a sent region is kept before it is
 /// taken back: a player on the edge is not sent the same region again
 /// with every step.
 const KEEP_RINGS: u32 = 1;
-
-/// Whether a region is streamed for a player at `(px, pz)` heading `dir`:
-/// inside the context radius always, beyond it when any of it can lie in
-/// the sector.
-fn in_stream(key: &MeshRegionKey, px: f32, pz: f32, dir: Vec2) -> bool {
-    let (wx, wz) = region_center(key);
-    let circum = common_bevy::summary::mesh_region_extent_wu(key.r) / 3.0_f32.sqrt();
-    Vec2::new(wx - px, wz - pz).length() <= common_bevy::summary::threshold_horiz(CONTEXT_LEVEL) + circum || in_sector(key, px, pz, dir)
-}
 
 /// Whether any of a region can lie in the sector a player at `(px, pz)`
 /// looks along `dir`, its centre judged with the slack of its own
@@ -104,11 +90,10 @@ fn in_sector(key: &MeshRegionKey, px: f32, pz: f32, dir: Vec2) -> bool {
 }
 
 /// Rebuild what each player wants when their chunk or the bearing its
-/// camera looks along changes:
-/// the regions in stream that are not sent, sent at once from the cache
-/// where every summary is computed, queued as pending otherwise, those in
-/// the sector the camera looks along first, each nearest first. Standing
-/// still costs nothing.
+/// camera looks along changes: every region of every band, all round, that
+/// is not sent, sent at once from the cache where every summary is
+/// computed, queued as pending otherwise, those in the sector the camera
+/// looks along first, each nearest first. Standing still costs nothing.
 pub fn pass_summary_regions(
     mut writer: MessageWriter<Do>,
     mut query: Query<(Entity, &Loc, &Heading, &mut VisibleSummaryCache)>,
@@ -116,16 +101,7 @@ pub fn pass_summary_regions(
     timings: Res<crate::plugins::metrics::SystemTimings>,
 ) {
     let _t = timings.scope("summary_pass");
-    // A summary is the ladder's cell, which no client reads from tiles: they
-    // are sent from the tiles' band out, as the finer levels' morph targets
-    // too.
-    let regions = |bands: &[common_bevy::summary::Band], wx: f32, wz: f32, rings: u32| -> HashSet<MeshRegionKey> {
-        let mut set = visible_lod_regions(bands, wx, wz, common_bevy::chunk::FIXED_STREAM_APOTHEM_WU, rings);
-        set.extend(visible_lod_regions(bands, wx, wz, 0.0, rings).into_iter().filter(|rk| rk.r >= LOD_LEVELS[1]));
-        set
-    };
     let region_lat = mesh_region_lattice();
-    let bands = compute_active_bands(common_bevy::summary::reach_wu());
     for (ent, loc, heading, mut vis_cache) in query.iter_mut() {
         let bearing = vis_cache.facing(*heading);
         let here = (common_bevy::chunk::loc_to_chunk(**loc), bearing);
@@ -136,13 +112,13 @@ pub fn pass_summary_regions(
 
         let (cam_wx, cam_wz) = flat_top_tile_center(loc.q, loc.r, 1.0);
         let facing = bearing.to_world_dir();
-        let visible_regions = regions(&bands, cam_wx, cam_wz, 0);
+        let visible_regions = streamed_regions(cam_wx, cam_wz, 0);
 
         // A region sent is taken back once it lies a ring past every band's
         // reach, whatever the heading (INV-005): the client holds exactly
         // what was sent and not taken back, and comes back to a region as
         // to one never seen.
-        let kept = regions(&bands, cam_wx, cam_wz, KEEP_RINGS);
+        let kept = streamed_regions(cam_wx, cam_wz, KEEP_RINGS);
         let removals: Vec<MeshRegionKey> = vis_cache.sent_regions.iter().filter(|rk| !kept.contains(rk)).copied().collect();
         if !removals.is_empty() {
             vis_cache.sent_regions.retain(|rk| kept.contains(rk));
@@ -152,7 +128,7 @@ pub fn pass_summary_regions(
         let mut cached_additions = Vec::new();
         let mut pending = Vec::new();
         for rk in &visible_regions {
-            if vis_cache.sent_regions.contains(rk) || !in_stream(rk, cam_wx, cam_wz, facing) {
+            if vis_cache.sent_regions.contains(rk) {
                 continue;
             }
             let cached: Option<Vec<SummaryData>> = region_lat.tiles_in_cell((rk.mn, rk.mm))
@@ -169,8 +145,8 @@ pub fn pass_summary_regions(
                 None => pending.push(*rk),
             }
         }
-        // What the screen can show first, then what streams round the
-        // player for context, each nearest first.
+        // What the screen can show first, then the rest of the far view
+        // round the player, each nearest first.
         pending.sort_by(|a, b| {
             let behind = |rk: &MeshRegionKey| !in_sector(rk, cam_wx, cam_wz, facing);
             behind(a).cmp(&behind(b)).then_with(|| {
@@ -418,11 +394,9 @@ fn region_distance_sq(key: &MeshRegionKey, px: f32, pz: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common_bevy::summary::{compute_active_bands, reach_wu, threshold_horiz};
-    use common_bevy::summary_mesh::visible_lod_regions;
 
-    /// The far view streams around the bearing the client's camera looks
-    /// along: the heading until a look turns it.
+    /// The far view streams first along the bearing the client's camera
+    /// looks along: the heading until a look turns it.
     #[test]
     fn the_far_view_streams_where_the_camera_looks() {
         let heading = Heading::from_slot(5);
@@ -435,31 +409,6 @@ mod tests {
         app.update();
         let vis_cache = app.world().get::<VisibleSummaryCache>(player).expect("cache");
         assert_eq!(vis_cache.facing(heading), heading.reversed());
-    }
-
-    /// Everything inside the context radius streams whatever the heading;
-    /// beyond it the sector keeps the share of the ring its angle covers.
-    #[test]
-    fn the_sector_keeps_the_context_ring_and_a_share_of_the_rest() {
-        let bands = compute_active_bands(reach_wu());
-        let (px, pz) = (1234.5, -987.0);
-        let regions = visible_lod_regions(&bands, px, pz, common_bevy::chunk::FIXED_STREAM_APOTHEM_WU, 0);
-        let context = threshold_horiz(CONTEXT_LEVEL);
-        let (mut near, mut far, mut far_kept) = (0usize, 0usize, 0usize);
-        let facing = Heading::from_slot(5).to_world_dir();
-        for rk in &regions {
-            let d = region_distance_sq(rk, px, pz).sqrt();
-            if d <= context {
-                near += 1;
-                assert!(in_stream(rk, px, pz, facing), "context region {rk:?} at {d} left out");
-            } else {
-                far += 1;
-                far_kept += in_stream(rk, px, pz, facing) as usize;
-            }
-        }
-        let share = far_kept as f32 / far as f32;
-        let sector = common::camera::STREAM_SECTOR_HALF_ANGLE / std::f32::consts::PI;
-        assert!(share > sector * 0.8 && share < sector * 1.6, "kept {far_kept} of {far} far regions ({share:.2}) for a sector of {sector:.2}; {near} near");
     }
 
     /// Every tile whose summary at a region's level lies in the region

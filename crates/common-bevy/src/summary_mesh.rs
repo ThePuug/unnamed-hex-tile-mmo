@@ -693,6 +693,19 @@ pub fn region_tiles_loaded(key: MeshRegionKey, loaded_chunks: &HashSet<ChunkId>)
 /// `margin_rings` widens every band's reach by that many region rings:
 /// none for what is sent, one for what is kept, so a region sent at the
 /// edge is not taken back as the player steps back over it.
+/// Every far region the server streams a player whose tile's centre is
+/// `(wx, wz)`: each band's regions past the tiles, and from the tiles'
+/// band out the regions under them too, which the finer levels morph onto.
+/// A summary is the ladder's cell, which no client reads from its tiles.
+/// `margin_rings` as [`visible_lod_regions`] takes it. The server sends by
+/// it and the client counts what is still to come by it.
+pub fn streamed_regions(wx: f32, wz: f32, margin_rings: u32) -> HashSet<MeshRegionKey> {
+    let bands = crate::summary::compute_active_bands(crate::summary::reach_wu());
+    let mut set = visible_lod_regions(&bands, wx, wz, crate::chunk::FIXED_STREAM_APOTHEM_WU, margin_rings);
+    set.extend(visible_lod_regions(&bands, wx, wz, 0.0, margin_rings).into_iter().filter(|rk| rk.r >= crate::summary::LOD_LEVELS[1]));
+    set
+}
+
 pub fn visible_lod_regions(
     bands: &[Band],
     cam_wx: f32,
