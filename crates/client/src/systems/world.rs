@@ -261,10 +261,14 @@ const MOON_HIGH: f32 = MOONRISE + (1. + MOONSET - MOONRISE) * (NOON - SUNRISE) /
 /// far behind the sun, so it meets the sun where the sun is.
 ///
 /// How wide it is at a meeting, its nearest but for its drift through
-/// the loop it holds the world on: wider than the sun there, to cover it
-/// in a leap season with the sun drawn off, and a degree where it rounds
-/// the sun half a year on, a spot on the sun's face.
-const VISITOR_WIDE: f32 = 3.4_f32.to_radians();
+/// the loop it holds the world on: so much wider than the sun drawn off
+/// at a leap season's middle that it covers it for the sixteen hours of
+/// that day's light, as the world goes round it.
+const VISITOR_WIDE: f32 = 7.7_f32.to_radians();
+/// Its width goes by this power of how near it is, and so falls off faster
+/// than its distance alone would have it: a degree where it rounds the sun
+/// half a year from a meeting, a spot on the sun's face.
+const VISITOR_SHRINKS: f32 = 1.67;
 /// The share of the sky's light left with the sun wholly covered, and of
 /// the sun's halo, which stands about the dark disc.
 const ECLIPSE_SKY: f32 = 0.02;
@@ -770,7 +774,7 @@ pub fn update(
 
     // The visitor: behind the sun on the sun's track by as much of a day
     // as it stands east of it, and as wide as it is near.
-    let (v_behind, v_wide) = (visit.east, VISITOR_WIDE * visit.near);
+    let (v_behind, v_wide) = (visit.east, VISITOR_WIDE * visit.near.powf(VISITOR_SHRINKS));
     let toward_of = |day: f32| toward(orbit(day, SUNRISE, NOON, SUNSET), s_tilt);
     let v_toward = toward_of(dtd - v_behind);
     let open = 1. - covered(s_toward.angle_between(v_toward), s_near * SUN_ANGULAR_DIAMETER / 2., v_wide / 2.);
