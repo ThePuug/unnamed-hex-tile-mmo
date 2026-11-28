@@ -562,7 +562,10 @@ same steps, a surface's step covers the tiles below it and leaves the tiles
 at it dry, so a dry tile has none. `Map::water_at` holds it apart from the
 ground so either may arrive first; movement never reads it, and any water is
 walked through. Water at zero is never built: the sea is the client's one plane, and a
-channel or lake surface at zero is under it.
+channel or lake surface at zero is under it. The sea is the ocean plates'
+ground below zero (`ladder::Level::sea`), and routing floods a continent's
+ground below zero from there; a rule that takes the sea from height alone
+makes an outlet of every pit inland.
 
 ## Pinned system ordering
 

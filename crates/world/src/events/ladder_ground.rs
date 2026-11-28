@@ -72,7 +72,7 @@ impl StackGround {
     /// The stack at a tile: its height and its rock's erodibility.
     fn stack(&self, q: i64, r: i64) -> Point {
         let view = self.base.compose(1, q as i32, r as i32, |_, _| {});
-        Point { height: view.elevation, erodibility: view.rock.map_or(1.0, |rock| rock.erodibility()), age: f64::NAN, moisture: f64::NAN }
+        Point { height: view.elevation, erodibility: view.rock.map_or(1.0, |rock| rock.erodibility()), age: f64::NAN, moisture: f64::NAN, ocean: false }
     }
 }
 
@@ -83,8 +83,11 @@ impl Ground for StackGround {
             return hit;
         }
         let (wx, wy) = hex_to_world(q as i32, r as i32);
+        // Past every outline lies open ocean.
+        let (age, ocean) = self.outlines.at(wx, wy).map_or((0.0, true), |at| (at.plate.age, !at.plate.continental));
         let point = Point {
-            age: self.outlines.at(wx, wy).map_or(0.0, |at| at.plate.age),
+            age,
+            ocean,
             moisture: forest::sky_moisture(wx, wy, self.wind, &self.coasts, &self.outlines),
             ..read.unwrap_or_else(|| self.stack(q, r))
         };
@@ -99,6 +102,12 @@ impl Ground for StackGround {
         let point = self.stack(q, r);
         self.memo.insert((q, r), point);
         point.height
+    }
+
+    fn ocean(&self, q: i64, r: i64) -> bool {
+        let (wx, wy) = hex_to_world(q as i32, r as i32);
+        // Past every outline lies open ocean.
+        self.outlines.at(wx, wy).is_none_or(|at| !at.plate.continental)
     }
 }
 

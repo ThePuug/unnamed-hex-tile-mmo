@@ -143,6 +143,9 @@ pub struct Point {
     /// The sky's moisture: the rain each tile adds to the water draining
     /// from it, one the shore's lowland's.
     pub moisture: f64,
+    /// Whether the plate it stands on is the ocean's: where that ground
+    /// lies below the sea's level, it is the sea.
+    pub ocean: bool,
 }
 
 /// What the ladder is seeded with: the ground at any tile.
@@ -151,6 +154,10 @@ pub trait Ground: Sync {
     /// The ground's height alone, where nothing else of the point is read.
     fn height(&self, q: i64, r: i64) -> f64 {
         self.at(q, r).height
+    }
+    /// Whether the plate there is the ocean's, where nothing else is read.
+    fn ocean(&self, q: i64, r: i64) -> bool {
+        self.at(q, r).ocean
     }
 }
 
@@ -294,6 +301,8 @@ pub struct Level {
     /// at its centre.
     pub rain: Paged<f64>,
     // Each vertex: a cell's centre, its corner A and its corner B.
+    /// Whether each vertex is the sea ([`Level::sea`]), false until read.
+    pub seas: Paged<bool>,
     /// The dry ground at each vertex, NaN until read: the ground's height
     /// there ([`Ground::at`]). A tile's corners lie between tiles, and take
     /// the mean of the three tiles sharing each.
@@ -439,6 +448,7 @@ impl Level {
             erod: nan(cells),
             age: nan(cells),
             rain: nan(cells),
+            seas: Paged::new(false, 3 * cells),
             ground: nan(3 * cells),
             carved: nan(3 * cells),
             sunk: nan(3 * cells),
@@ -520,6 +530,15 @@ impl Level {
         let a = (page / side) * 64 + (at >> 6);
         let b = (page % side) * 64 + (at & 63);
         (lo.0 + a as i64, lo.1 + b as i64)
+    }
+
+    /// Whether a vertex is the sea: ground below the sea's level on the
+    /// ocean's plate. Every river's outlet. Ground below that level on a
+    /// continent's plate is ground like any other: the sea stands over it
+    /// only where the flood carries it in from here, and a hollow it
+    /// cannot reach fills to its own rim. Its cell must be read.
+    pub fn sea(&self, v: usize) -> bool {
+        self.seas.get(v)
     }
 
     /// A vertex's index, where the level holds its cell.
@@ -845,7 +864,11 @@ impl<'g, G: Ground> Ladder<'g, G> {
                                             let (q3, r3) = pos3(t, i, j, lv.w);
                                             match t {
                                                 0 => ground.at(q3 / 3, r3 / 3),
-                                                _ => Point { height: ground.height(q3 / 3, r3 / 3), erodibility: f64::NAN, age: f64::NAN, moisture: f64::NAN },
+                                                _ => {
+                                                    // The plate is asked only of ground the sea could be.
+                                                    let height = ground.height(q3 / 3, r3 / 3);
+                                                    Point { height, erodibility: f64::NAN, age: f64::NAN, moisture: f64::NAN, ocean: height < 0.0 && ground.ocean(q3 / 3, r3 / 3) }
+                                                }
                                             }
                                         })
                                         .collect::<Vec<_>>()
@@ -859,6 +882,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             for (&c, points) in todo.iter().zip(read) {
                 for ((_, v), point) in lv.own_vertices(c).zip(&points) {
                     lv.ground.set(v, point.height);
+                    lv.seas.set(v, point.height < 0.0 && point.ocean);
                 }
                 lv.erod.set(c, points[0].erodibility);
                 lv.age.set(c, points[0].age);

@@ -24,6 +24,12 @@
 //! carrying the larger catchment, so a river born at the level runs on to
 //! where it meets one handed down, or to its outlet.
 //!
+//! The sea is the ocean's plate where its ground lies below the sea's
+//! level ([`Level::sea`]), and every river's outlet. It stands at its
+//! level over whatever ground the flood carries it across: a continent's
+//! ground below that level is a bay where the sea reaches it, and a hollow
+//! like any other where it cannot.
+//!
 //! A hollow holds a lake: the footprint is flooded from its outlets, the
 //! sea and its edge, lowest water first, its ground under a lake the level
 //! above hands down standing at that lake's surface as the level's own
@@ -194,6 +200,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     let local = |g: usize| -> Option<usize> { (loc.get(g) >= 0).then(|| loc.get(g) as usize) };
     let mut known = vec![false; nv];
     let mut sink = vec![false; nv];
+    let mut sea = vec![false; nv];
     let mut decided = vec![false; nv];
     let mut key = vec![(0.0f64, 0i64, 0i64); nv];
     let mut at = vec![(0.0f64, 0.0f64); nv];
@@ -206,7 +213,8 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         key[x] = (lv.brim.get(v), 2 * r3 + q3, q3);
         at[x] = xy(q3, r3);
         pos[x] = (q3, r3);
-        if known[x] && lv.ground.get(v) < 0.0 {
+        if known[x] && lv.sea(v) {
+            sea[x] = true;
             sink[x] = true;
             decided[x] = true;
         }
@@ -300,7 +308,10 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
             }
             seen[y] = true;
             came[y] = f.x;
-            heap.push(Reverse(Flood { level: f.level.max(base[y]), key: key[y], x: y }));
+            // The sea stands at its level over the ground below it that it
+            // reaches: a continent's beside the sea is flooded to there.
+            let level = if sea[f.x] && lv.ground.get(vids[y]) < 0.0 { f.level.max(0.0) } else { f.level };
+            heap.push(Reverse(Flood { level: level.max(base[y]), key: key[y], x: y }));
         }
     }
     // Where each vertex's water ends going downhill: its own index in a
@@ -570,7 +581,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
                 let tiles = (at[x].0 - at[y].0).hypot(at[x].1 - at[y].1) / crate::SQRT_3;
                 let up = graded[y] + graded_slope(acc[x], lv.erod.get(v % nn), p) * tiles;
                 above_sea(src_graded[x].min(up).max(graded[y]))
-            } else if sink[x] && lv.ground.get(v) < 0.0 {
+            } else if sea[x] {
                 0.0
             } else {
                 f64::NAN
@@ -824,7 +835,7 @@ pub(super) fn flood_zone(lv: &Level, zone: &HashSet<usize>) {
             }
             vertices.push(v);
             let (t, i, j) = lv.vertex(v);
-            let mut outlet = lv.ground.get(v) < 0.0;
+            let mut outlet = lv.sea(v);
             for k in 0..6 {
                 let (tt, ni, nj) = vnbr(t, i, j, k);
                 match lv.idx(ni, nj).filter(|&d| lv.exists[d]) {
@@ -853,7 +864,10 @@ pub(super) fn flood_zone(lv: &Level, zone: &HashSet<usize>) {
             let Some(d) = lv.idx(ni, nj).filter(|&d| lv.exists[d]) else { continue };
             let u = tt as usize * nn + d;
             if inside(u) && !lv.brim.get(u).is_nan() && seen.insert(u) {
-                heap.push(Reverse(Flood { level: f.level.max(lv.brim.get(u)), key: key(lv, u), x: u }));
+                // The sea carries its level over the ground below it, as
+                // routing floods it.
+                let reached = if lv.sea(f.x) && lv.ground.get(u) < 0.0 { f.level.max(0.0) } else { f.level };
+                heap.push(Reverse(Flood { level: reached.max(lv.brim.get(u)), key: key(lv, u), x: u }));
             }
         }
     }

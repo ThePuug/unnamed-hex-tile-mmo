@@ -29,7 +29,8 @@ impl PartialOrd for Waiting {
 }
 
 /// Every vertex's receiver, the top's catchment, graded profiles and floors. Water drains from
-/// the sinks, the sea and the domain's edge, by a priority flood; off a
+/// the sinks, the sea ([`Level::sea`], by the ground as the top rounds it)
+/// and the domain's edge, by a priority flood; off a
 /// trough a vertex's water splits between the two neighbours bracketing its
 /// downslope, both nearer the outlet in the flood's order, so a slope drains
 /// in a spread rather than a comb of parallel streams; along a trough it goes
@@ -66,7 +67,9 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
         })
         .collect();
     let live: Vec<bool> = (0..count).map(|v| lv.exists[v % nn] && !lv.z.get(v).is_nan()).collect();
-    let sink: Vec<bool> = (0..count).map(|v| live[v] && (nbr[v].iter().any(|&u| u < 0) || lv.z.get(v) < 0.0)).collect();
+    // The sea: ground below its level on the ocean's plate.
+    let sea: Vec<bool> = (0..count).map(|v| live[v] && lv.z.get(v) < 0.0 && lv.sea(v)).collect();
+    let sink: Vec<bool> = (0..count).map(|v| live[v] && (nbr[v].iter().any(|&u| u < 0) || sea[v])).collect();
 
     // The flood.
     let mut rec = vec![-1i64; count];
@@ -91,6 +94,10 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
             let u = u as usize;
             closed[u] = true;
             rec[u] = v as i64;
+            // The sea stands at its level over the ground below it that
+            // it reaches: a continent's beside the sea is a bay, flooded
+            // to there, and such ground it cannot reach fills to its rim.
+            let level = if sea[v] && lv.z.get(u) < 0.0 { level.max(0.0) } else { level };
             let f = e[u].max(level);
             filled[u] = f;
             heap.push(Waiting(f, counter, u));
@@ -239,7 +246,7 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
     for &v in &order {
         let c = v % nn;
         graded[v] = if rec[v] < 0 {
-            if lv.z.get(v) < 0.0 { 0.0 } else { f64::NAN }
+            if sea[v] { 0.0 } else { f64::NAN }
         } else if flooded(v) {
             // The sea is every river's base level: ground flooded below it
             // drains to the sea's.
