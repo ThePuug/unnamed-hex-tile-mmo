@@ -62,7 +62,7 @@ pub fn try_spawn_party(
         };
         let side = if *engage { parties.next() } else { Side::WILD };
         info!("party: {size}x{archetype:?}@{level} on {side:?} at {at:?}, {} {ent} at {:?}", if *engage { "engaging" } else { "ahead of" }, **loc);
-        spawn_engagement(&tuning, at, *archetype, side, *level, *size, |q, r| registry.elevation_at(q, r), &mut commands, &time);
+        spawn_engagement(&tuning, at, *archetype, side, *level, ACQUISITION_RANGE, *size, |q, r| registry.elevation_at(q, r), &mut commands, &time);
     }
 }
 

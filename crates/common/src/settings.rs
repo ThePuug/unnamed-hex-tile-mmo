@@ -33,6 +33,9 @@ pub enum Setting {
     /// is given exactly what it takes as it is asked for, and a camp what
     /// its hub's plans still lack as it is hailed or given a plan.
     FreeMaterials,
+    /// How many hours of the calendar the country takes to give way a
+    /// level to a hub: never fewer than a day's.
+    LevelHours,
 }
 
 /// The furthest a den is drawn from, in tiles: the outer edge of the
@@ -43,7 +46,7 @@ pub const DEN_REACH: i32 = 1083;
 impl Setting {
     /// Every setting, in the order a `Settings` holds them and the
     /// admin console lists them.
-    pub const ALL: [Setting; 6] = [Setting::DensShown, Setting::DenSight, Setting::SettlerHaste, Setting::HearthPlayers, Setting::PlayerSlots, Setting::FreeMaterials];
+    pub const ALL: [Setting; 7] = [Setting::DensShown, Setting::DenSight, Setting::SettlerHaste, Setting::HearthPlayers, Setting::PlayerSlots, Setting::FreeMaterials, Setting::LevelHours];
 
     /// The number the store keeps it by: given once and never again, so
     /// a rename or a new order of [`Setting::ALL`] keeps it.
@@ -55,6 +58,7 @@ impl Setting {
             Setting::HearthPlayers => 4,
             Setting::PlayerSlots => 5,
             Setting::FreeMaterials => 6,
+            Setting::LevelHours => 7,
         }
     }
 
@@ -71,6 +75,7 @@ impl Setting {
             Setting::HearthPlayers => "Players per Hearth",
             Setting::PlayerSlots => "Player Slots",
             Setting::FreeMaterials => "Free Materials",
+            Setting::LevelHours => "Hours a Level",
         }
     }
 
@@ -83,6 +88,7 @@ impl Setting {
             Setting::HearthPlayers => "Every hearth counts as this many more at home",
             Setting::PlayerSlots => "The server takes this many clients at once",
             Setting::FreeMaterials => "On, a build and a settler are given what they lack, for trying things",
+            Setting::LevelHours => "The country gives way to a hub a level in this many hours",
         }
     }
 
@@ -101,6 +107,7 @@ impl Setting {
             Setting::HearthPlayers => 0,
             Setting::PlayerSlots => 64,
             Setting::FreeMaterials => 0,
+            Setting::LevelHours => 24,
         }
     }
 
@@ -115,6 +122,8 @@ impl Setting {
             // The transport takes no more
             Setting::PlayerSlots => (1, 1024),
             Setting::FreeMaterials => (0, 1),
+            // A level a day is the fastest the country gives way
+            Setting::LevelHours => (24, 24 * 365),
         }
     }
 

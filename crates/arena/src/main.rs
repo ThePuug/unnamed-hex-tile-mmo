@@ -429,7 +429,7 @@ fn fight(west: Team, east: Team, settings: &Settings, seed: u64) -> Outcome {
     {
         let mut commands = world.commands();
         for (team, side, at, foes) in [(west, WEST, west_at, east_at), (east, EAST, east_at, west_at)] {
-            spawn_engagement(&settings.tuning, jitter(at, foes, &dice), team.archetype, side, team.level, team.size, |_, _| 0, &mut commands, &time);
+            spawn_engagement(&settings.tuning, jitter(at, foes, &dice), team.archetype, side, team.level, combat::behaviour::ACQUISITION_RANGE, team.size, |_, _| 0, &mut commands, &time);
         }
     }
     world.flush();

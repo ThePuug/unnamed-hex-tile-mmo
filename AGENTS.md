@@ -413,6 +413,17 @@ thing built faces is the cover's (`Cover::facing`, one of
 settler drives them, and the client turns the model by it and asks no
 hub.
 
+**Nests.** A nest stands on every den site the world names unless its
+colony says it is broken (`server::systems::dens::Colony`): the country
+is full where no one has been, and only what players changed is kept.
+Nothing breaks a nest or raises one but `Dens::died`, `Dens::grow` and
+quiet ground (`Hubs::quiet`); a path that puts a den on a site because a
+player is near refills what was cleared. A nest's creatures are at
+`Hubs::level` where it stands, read as they are made and kept nowhere,
+so a hub's push reaches the nests already there. A den's pack is groups,
+each its own engagement that notices from nearer than the groups stand
+apart (`dens::NOTICE`), and nothing calls one group to another's fight.
+
 **Hubs.** A hub is the ground it claims, its zones and what stands in
 it: `common_bevy::plan` is the one rule for all three, and for the wall,
 the tightest outline round the claim (`qrz::outline`). It is planned for

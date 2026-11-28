@@ -74,6 +74,9 @@ pub struct Batch {
     /// Each den site written, by its `(q, r)`: its den's JSON, or none
     /// where it has none any more.
     pub dens: Vec<(ChunkId, (i32, i32), Option<String>)>,
+    /// Each colony written, by its number: its JSON, or none where
+    /// every nest of it stands again.
+    pub colonies: Vec<((i32, i32), Option<String>)>,
     /// Each camp written, by its hearth's `(q, r)`: its JSON, or none
     /// where the hearth has none any more.
     pub camps: Vec<(ChunkId, (i32, i32), Option<String>)>,
@@ -275,6 +278,16 @@ impl Store {
             .await?
             .into_iter()
             .map(|row| ((row.q, row.r), row.stacks.0))
+            .collect())
+    }
+
+    /// Every colony kept, by its number, as its JSON.
+    pub async fn colonies(&self) -> Result<Vec<((i32, i32), serde_json::Value)>, sqlx::Error> {
+        Ok(sqlx::query!(r#"SELECT q, r, state AS "state: Json<serde_json::Value>" FROM colony"#)
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(|row| ((row.q, row.r), row.state.0))
             .collect())
     }
 
@@ -540,6 +553,26 @@ impl Store {
         )
         .execute(&mut *tx)
         .await?;
+        let colony_qs: Vec<i32> = batch.colonies.iter().map(|c| c.0 .0).collect();
+        let colony_rs: Vec<i32> = batch.colonies.iter().map(|c| c.0 .1).collect();
+        let colony_states: Vec<Option<String>> = batch.colonies.iter().map(|c| c.1.clone()).collect();
+        sqlx::query!(
+            "DELETE FROM colony c USING UNNEST($1::INT[], $2::INT[]) AS t(q, r) WHERE c.q = t.q AND c.r = t.r",
+            &colony_qs,
+            &colony_rs,
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "INSERT INTO colony (q, r, state)
+             SELECT q, r, state::JSONB FROM UNNEST($1::INT[], $2::INT[], $3::TEXT[]) AS t(q, r, state)
+             WHERE state IS NOT NULL",
+            &colony_qs,
+            &colony_rs,
+            &colony_states as &[Option<String>],
+        )
+        .execute(&mut *tx)
+        .await?;
         let camp_chunks: Vec<i64> = batch.camps.iter().map(|c| key(c.0)).collect();
         let camp_qs: Vec<i32> = batch.camps.iter().map(|c| c.1 .0).collect();
         let camp_rs: Vec<i32> = batch.camps.iter().map(|c| c.1 .1).collect();
@@ -795,6 +828,18 @@ mod tests {
             let gone = Batch { epochs, dens: vec![(here, (20, 21), None)], ..Default::default() };
             assert!(store.write(gone).await.unwrap().is_empty());
             assert!(store.recall(&[here]).await.unwrap().dens.is_empty());
+        });
+    }
+
+    #[test]
+    #[ignore = "needs the PostgreSQL the server keeps to"]
+    fn a_colony_is_kept_until_it_is_whole_again() {
+        scratch(async |store| {
+            let broken = Batch { colonies: vec![((3, -4), Some(r#"{"of":2}"#.into())), ((5, 5), Some(r#"{"of":3}"#.into()))], ..Default::default() };
+            assert!(store.write(broken).await.unwrap().is_empty());
+            let changed = Batch { colonies: vec![((3, -4), None), ((5, 5), Some(r#"{"of":4}"#.into()))], ..Default::default() };
+            assert!(store.write(changed).await.unwrap().is_empty());
+            assert_eq!(store.colonies().await.unwrap(), vec![((5, 5), serde_json::json!({"of": 4}))]);
         });
     }
 

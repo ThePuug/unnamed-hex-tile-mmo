@@ -112,7 +112,7 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use dashmap::DashMap;
 use parking_lot::{MappedRwLockReadGuard, Mutex};
 
-use common::{den::Habitat, Cover, HexLattice, Rock};
+use common::{den::Site, Cover, HexLattice, Rock};
 
 use crate::hex_to_world;
 use crate::lattice::hex_distance;
@@ -149,8 +149,8 @@ pub struct TileOutput {
     /// What stands in the tile's seven slots, where a layer puts anything.
     /// A later layer's cover replaces an earlier one's.
     pub cover: Cover,
-    /// The habitat of a den whose site is this tile, where a layer says so
-    pub den: Option<Habitat>,
+    /// The den site this tile is, where a layer says so
+    pub den: Option<Site>,
     /// Which of the nine parts of the cell the read stands on lie under
     /// water above the sea, a bit to each, where a layer holds that cell.
     pub wet: Option<u16>,
@@ -203,8 +203,8 @@ pub struct TileView {
     pub rock: Option<Rock>,
     /// What stands in the tile's seven slots.
     pub cover: Cover,
-    /// The habitat of a den whose site is this tile, as [`TileOutput::den`].
-    pub den: Option<Habitat>,
+    /// The den site this tile is, as [`TileOutput::den`].
+    pub den: Option<Site>,
     /// Which parts of the cell the read stands on lie under water, as
     /// [`TileOutput::wet`]; None where no layer holds that cell.
     pub wet: Option<u16>,
@@ -1129,8 +1129,9 @@ impl Composite {
         self.tile_on(w, q, r).cover
     }
 
-    /// The habitat of the den whose site is this tile, where one is.
-    pub fn den_at(&self, q: i32, r: i32) -> Option<Habitat> {
+    /// The den site this tile is, where it is one: its ground, and its
+    /// place in its colony.
+    pub fn den_at(&self, q: i32, r: i32) -> Option<Site> {
         self.tile_at(q, r).den
     }
 

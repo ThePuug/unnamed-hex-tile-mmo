@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM colony c USING UNNEST($1::INT[], $2::INT[]) AS t(q, r) WHERE c.q = t.q AND c.r = t.r",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4Array",
+        "Int4Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dff1e6911588adad144fdb2ff88f753924624eae3a7890c69ef5de9dc0515ee8"
+}

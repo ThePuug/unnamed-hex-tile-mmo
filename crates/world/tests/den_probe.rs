@@ -25,7 +25,7 @@ fn habitats_around_the_haven() {
     for cell in lattice.cells_within_distance(home, 12) {
         for (q, r) in sites_of(&lattice, cell, WORLD_SEED) {
             sites += 1;
-            if let Some(habitat) = composite.tile_at(q, r).den {
+            if let Some(habitat) = composite.tile_at(q, r).den.map(|site| site.habitat) {
                 *counts.entry(habitat).or_default() += 1;
             }
         }

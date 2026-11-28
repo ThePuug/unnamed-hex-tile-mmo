@@ -22,8 +22,14 @@
 //! The haven is no hub. It is the point the world names, where a player
 //! who has claimed no home is at home: it has no size, takes nothing in
 //! and is taken in by nothing. Its guard keeps the ground round it, and
-//! its influence is whole, so the country round it is the mildest there
-//! is.
+//! the country's level is counted from it, so the country round it is
+//! the mildest there is.
+//!
+//! A hub pushes the country back ([`Hubs::influence`]), and the country
+//! gives way to it a level a day ([`Hubs::age`]): the level a nest's
+//! creatures are at is the country's own less what the hubs have pushed
+//! back ([`Hubs::level`]), and no nest stands on quiet ground
+//! ([`Hubs::quiet`]).
 //!
 //! Hubs are few and known whole, wherever their ground is. How they are
 //! kept past the server is not this module's to know. The server holds
@@ -40,16 +46,23 @@ use qrz::{
 };
 
 use crate::plan::{self, Item, Kind, Tile, What, Zone};
+use crate::systems::When;
 
 /// How far round its point the haven's guard keeps the ground, in tiles.
 pub const HAVEN_GROUND: f32 = 76.0;
 
-/// How far past its guarded ground the haven's influence carries, in
-/// tiles.
-pub const HAVEN_REACH: f32 = 1900.0;
+/// Tiles from the haven each level of the country lies further out, where
+/// no hub pushes it back.
+pub const LEVEL_TILES: f32 = 400.0;
 
-/// How far past its wall a hub's influence carries, in lengths of that
-/// wall.
+/// How far past its wall a hub's push is whole, in tiles: as far as a
+/// creature follows what it fights from its nest
+/// (`combat::behaviour::LEASH_DISTANCE`), so nothing a nest out there
+/// sends reaches the wall.
+pub const QUIET: f32 = 60.0;
+
+/// How far past its quiet ground a hub's influence carries, in lengths
+/// of its wall.
 pub const INFLUENCE_WALLS: f32 = 1.5;
 
 /// The players at home in a hub whose influence is whole over its ground.
@@ -81,6 +94,12 @@ struct Held {
     hired: BTreeSet<Zone>,
     walled: bool,
     took: Vec<HubId>,
+    /// When the country began to give way to it, on the calendar; none
+    /// until it is first aged ([`Hubs::age`]).
+    since: Option<When>,
+    /// How much of its push the country has given way to, 0 to 1, as it
+    /// was last aged.
+    given: f32,
 }
 
 /// A hub as a plan leaves it.
@@ -142,6 +161,10 @@ pub struct Kept {
     #[serde(default)]
     pub path: Vec<Tile>,
     pub took: Vec<Tile>,
+    /// When the country began to give way to it, in the calendar's
+    /// milliseconds.
+    #[serde(default)]
+    pub since: Option<u64>,
 }
 
 impl Kept {
@@ -166,6 +189,7 @@ impl Kept {
             gate: None,
             path: Vec::new(),
             took: took.iter().map(|id| (id.0, id.1)).collect(),
+            since: None,
         }
     }
 
@@ -368,7 +392,7 @@ impl Hubs {
         let lie = after.hub.lies();
         let ground = Ground { tiles: lie.ground, wall: lie.wall };
         let (gate, path) = self.way(after.id, &after.hub, &ground);
-        Held { path, gate, ground, hub: after.hub.clone(), hired: after.hired.clone(), walled: after.walled, took: after.took.clone() }
+        Held { path, gate, ground, hub: after.hub.clone(), hired: after.hired.clone(), walled: after.walled, took: after.took.clone(), since: None, given: 0.0 }
     }
 
     /// The way in through the wall of `ground`, hub `id`'s, the one tile
@@ -823,12 +847,20 @@ impl Hubs {
     /// Does what `plan` said: its hubs are as it leaves them, and those it
     /// took in are no more. A zone a hub no longer has keeps no planner.
     pub fn carry(&mut self, plan: &Plan) {
+        // A hub keeps how far the country has given way to it, and one a
+        // plan makes of others starts as far along as the furthest of them
+        let pushed = |id: &HubId| self.hubs.get(id).and_then(|held| Some((held.since?, held.given)));
+        let eldest = plan.taken.iter().chain(plan.after.iter().map(|after| &after.id)).filter_map(pushed).min_by_key(|&(since, _)| since);
+        let before: Vec<Option<(When, f32)>> = plan.after.iter().map(|after| pushed(&after.id).or(eldest)).collect();
         for id in &plan.taken {
             self.hubs.remove(id);
         }
-        for after in &plan.after {
+        for (after, pushed) in plan.after.iter().zip(before) {
             let mut held = self.hold(after);
             held.hired.retain(|zone| *zone == Zone::Logistics || held.hub.zones.contains_key(zone));
+            if let Some((since, given)) = pushed {
+                (held.since, held.given) = (Some(since), given);
+            }
             self.hubs.insert(after.id, held);
         }
         // A home given up is no one's home
@@ -857,7 +889,7 @@ impl Hubs {
             .into_iter()
             .map(|id| {
                 let held = &self.hubs[&id];
-                Kept { gate: held.gate, path: held.path.clone(), ..Kept::of((id.0, id.1), &held.hub, &held.hired, held.walled, &held.took) }
+                Kept { gate: held.gate, path: held.path.clone(), since: held.since.map(|since| since.0), ..Kept::of((id.0, id.1), &held.hub, &held.hired, held.walled, &held.took) }
             })
             .collect()
     }
@@ -874,6 +906,7 @@ impl Hubs {
             if let Some(gate) = kept.gate.filter(|gate| held.ground.wall.contains(gate)) {
                 (held.gate, held.path) = (Some(gate), kept.path.clone());
             }
+            held.since = kept.since.map(When);
             self.hubs.insert(id, held);
         }
         for (who, home) in residents {
@@ -913,7 +946,8 @@ impl Hubs {
         ground.wall.iter().map(|&at| distance(at, tile)).min_by(f32::total_cmp)
     }
 
-    /// How far past its wall hub `id`'s influence carries, in tiles.
+    /// How far past its quiet ground hub `id`'s influence carries, in
+    /// tiles.
     pub fn reach(&self, id: HubId) -> f32 {
         self.ground(id).map_or(0.0, |ground| INFLUENCE_WALLS * ground.wall.len() as f32)
     }
@@ -924,30 +958,63 @@ impl Hubs {
         ((self.size(id).max(1) as f32) / INFLUENCE_WHOLE).sqrt().min(1.0)
     }
 
-    /// How far `tile` lies outside the haven's guarded ground, in tiles.
-    fn past_haven(&self, tile: Tile) -> f32 {
-        (distance(self.haven, tile) - HAVEN_GROUND).max(0.0)
-    }
-
-    /// Whether the haven's influence reaches `tile`.
-    pub fn haven_reaches(&self, tile: Tile) -> bool {
-        self.past_haven(tile) < HAVEN_REACH
-    }
-
     /// Whether hub `id`'s influence reaches `tile`.
     pub fn reaches(&self, id: HubId, tile: Tile) -> bool {
-        self.outside(id, tile).is_some_and(|outside| outside < self.reach(id))
+        self.outside(id, tile).is_some_and(|outside| outside < QUIET + self.reach(id))
     }
 
-    /// The influence the haven and every hub have on `tile` together, 0
-    /// to 1. Each one's is its strength, the haven's whole, over all the
-    /// ground it holds; past that edge it falls as the cube of what is
-    /// left of the way to its reach. It is what pushes the hard country
-    /// back. Unbuilt: nothing in the game reads it; a den's level will.
+    /// The level of the country at `tile` with no hub in the world: its
+    /// distance from the haven, a level each [`LEVEL_TILES`], with no top.
+    pub fn wild(&self, tile: Tile) -> f32 {
+        distance(self.haven, tile) / LEVEL_TILES
+    }
+
+    /// Ages every hub to the calendar's `now`, the country giving way a
+    /// level each `hours`: a hub's push is given way to in full once the
+    /// levels its hearth stood at have passed, from when it was first
+    /// aged. Whatever reads [`Hubs::influence`] reads it as last aged.
+    pub fn age(&mut self, now: When, hours: i32) {
+        let level = std::time::Duration::from_secs(3600 * hours.max(1) as u64).as_secs_f32();
+        let wild: HashMap<HubId, f32> = self.hubs.iter().map(|(&id, held)| (id, self.wild(held.hub.hearth().unwrap_or((id.0, id.1))))).collect();
+        for (id, held) in self.hubs.iter_mut() {
+            self.changed |= held.since.is_none();
+            let passed = now.since(*held.since.get_or_insert(now)).as_secs_f32() / level;
+            held.given = if passed >= wild[id] { 1.0 } else { passed / wild[id] };
+        }
+    }
+
+    /// How much of its push the country has given way to round hub `id`,
+    /// 0 to 1, as it was last aged.
+    pub fn given(&self, id: HubId) -> f32 {
+        self.hubs.get(&id).map_or(0.0, |held| held.given)
+    }
+
+    /// The influence every hub has on `tile` together, 0 to 1: how far
+    /// players have pushed the country back there. A hub's is whole over
+    /// its ground and [`QUIET`] past its wall; further out it is its
+    /// strength, falling as the cube of what is left of the way to its
+    /// reach. Each counts for as much of that as the country has given
+    /// way to it.
     pub fn influence(&self, tile: Tile) -> f32 {
-        let felt = |strength: f32, outside: f32, reach: f32| strength * (1.0 - (outside / reach.max(1.0)).clamp(0.0, 1.0)).powi(3);
-        let hubs = self.hubs.keys().filter_map(|&id| Some(felt(self.strength(id), self.outside(id, tile)?, self.reach(id))));
-        (felt(1.0, self.past_haven(tile), HAVEN_REACH) + hubs.sum::<f32>()).min(1.0)
+        let felt = |strength: f32, outside: f32, reach: f32| match outside <= QUIET {
+            true => 1.0,
+            false => strength * (1.0 - ((outside - QUIET) / reach.max(1.0)).clamp(0.0, 1.0)).powi(3),
+        };
+        self.hubs.iter().filter_map(|(&id, held)| Some(held.given * felt(self.strength(id), self.outside(id, tile)?, self.reach(id)))).sum::<f32>().min(1.0)
+    }
+
+    /// The level a nest's creatures are at on `tile`: the country's own
+    /// there, less the share of it the hubs have pushed back.
+    pub fn level(&self, tile: Tile) -> u8 {
+        (self.wild(tile) * (1.0 - self.influence(tile))).clamp(0.0, u8::MAX as f32) as u8
+    }
+
+    /// Whether no nest stands on `tile`: the haven's guard keeps it, a hub
+    /// holds it as its ground, or it lies within [`QUIET`] of a wall the
+    /// country has given way to in full.
+    pub fn quiet(&self, tile: Tile) -> bool {
+        self.guarded(tile)
+            || self.hubs.iter().any(|(&id, held)| self.outside(id, tile).is_some_and(|outside| outside <= 0.0 || (held.given >= 1.0 && outside <= QUIET)))
     }
 }
 
@@ -1184,21 +1251,39 @@ mod tests {
         assert_eq!(again.path(id), on_flat.path(id));
     }
 
-    /// Influence is whole at the haven and falls away from it, and a
-    /// hub's reaches further the longer its wall.
+    /// The country is a level deeper each stretch from the haven with no
+    /// top, a hub pushes none of it back the day it is founded, and the
+    /// country gives way to it a level a day until the ground round its
+    /// wall is quiet. Its influence reaches further the longer its wall.
     #[test]
-    fn influence_falls_with_distance_and_grows_with_the_hub() {
+    fn the_country_gives_way_to_a_hub_a_level_a_day() {
+        let day = std::time::Duration::from_secs(86_400);
         let mut hubs = Hubs::new((0, 0));
-        assert_eq!(hubs.influence((0, 0)), 1.0);
-        assert!(hubs.influence((1500, 0)) < hubs.influence((500, 0)));
-        let far = (9000, 0);
-        assert_eq!(hubs.influence(far), 0.0);
+        let far = (LEVEL_TILES as i32 * 20, 0);
+        let (beside, past) = ((far.0 + 30, far.1), (far.0 + 300, far.1));
+        assert_eq!((hubs.level((0, 0)), hubs.level(far), hubs.level((LEVEL_TILES as i32 * 200, 0))), (0, 20, 200));
         let id = hubs.founded(far);
-        let near = hubs.influence(far);
-        assert!(near > 0.0 && near < 0.1);
+        let founded = When(1_000);
+        hubs.age(founded, 24);
+        assert_eq!((hubs.influence(beside), hubs.level(beside)), (0.0, 20), "the day it is founded, nothing has given way");
+        assert!(hubs.quiet(far) && !hubs.quiet(beside), "its ground holds no nest; the ground round it does yet");
+        let levels: Vec<u8> = (0..=20u32).map(|days| {
+            hubs.age(founded + day * days, 24);
+            hubs.level(beside)
+        }).collect();
+        assert!(levels.windows(2).all(|pair| pair[1] <= pair[0] && pair[0] - pair[1] <= 1), "never faster than a level a day: {levels:?}");
+        assert_eq!(levels[20], 0);
+        assert!(hubs.quiet(beside), "then the ground round its wall is quiet");
+        assert!(!hubs.quiet(past) && hubs.level(past) > 0, "and past it the country is only pushed back");
         let reach = hubs.reach(id);
         { let plan = hubs.planned(id, 40); carried(&mut hubs, plan) };
         assert!(hubs.reach(id) > reach);
-        assert!(hubs.reaches(id, (far.0 + 20, far.1)) && !hubs.reaches(id, (far.0 + 2000, far.1)));
+        assert_eq!(hubs.given(id), 1.0, "a plan leaves what the country has given way to as it was");
+        assert!(hubs.reaches(id, (far.0 + 20, far.1)) && !hubs.reaches(id, (far.0 + 3000, far.1)));
+        // Kept and laid again, it began when it did
+        let mut again = Hubs::new((0, 0));
+        again.recall(hubs.kept(), Vec::new());
+        again.age(founded + day * 20, 24);
+        assert_eq!(again.given(id), 1.0);
     }
 }

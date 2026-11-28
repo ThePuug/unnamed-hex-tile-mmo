@@ -2,27 +2,40 @@
 //! them.
 //!
 //! The world says where a den may stand and on what ground: a tile carries
-//! a den site's habitat (`EventRegistry::den_at`), and a chunk's sites are
-//! found as it is generated. A den on a site is a change to the world, the
-//! server's to make, and it ages on world time. A site with none, a player
-//! near, gets one of the archetype that dens on its ground, at the level its
-//! distance from the haven gives. A den is a nest and the pack that lives in it. The nest is
-//! an actor of its own, standing where the den is drawn, that a player
-//! targets and strikes; while it stands, the den brings back one of its
-//! pack's dead every [`RESPAWN`]. A standing den keeps both while players
-//! come and go: one abandoned unwatched comes back whole when a player
-//! returns. Breaking the nest leaves the den cleared, whatever of its pack
-//! still lives the last of it: a change that stands for [`DECAY`] and then
-//! is gone, leaving the site as the world made it. A standing den's growth
-//! with age is unbuilt. A den outlives the server where it stands and as
-//! it is, standing or cleared: whatever keeps the world is told of each
-//! that changes ([`Dens::take_changed`]) and recalls those it kept
-//! ([`Dens::recall`]) before their chunk's sites are found. Its nest and
-//! pack do not, and come back whole as a player nears; the ground it
-//! clears is laid again when it next stands.
+//! a den site's habitat and its place in its colony
+//! (`EventRegistry::den_at`), and a chunk's sites are found as it is
+//! generated. A nest stands on every site unless it was broken: the
+//! country is full where no one has been, and only what players changed is
+//! kept. A den is a nest and the pack that lives in it. The nest is an
+//! actor of its own, standing where the den is drawn, that a player
+//! targets and strikes; its pack stands round it in groups, each an
+//! engagement at a post of its own that notices a player from [`NOTICE`]
+//! tiles, nearer than the posts stand apart, so a pack is pulled a group
+//! at a time and never comes whole. While the nest stands it brings back
+//! one of its pack's dead every [`RESPAWN`].
+//!
+//! Breaking the nest leaves the den broken, drawn as its wreck, whatever
+//! of its pack still lives the last of it. A broken nest is raised again
+//! while any nest of its colony stands, one each [`REGROW`]; a colony
+//! with none standing is dead until a colony beside it has stood for
+//! [`SPREAD`], and then one of its nests is raised from there
+//! ([`Dens::grow`]). Both go by the calendar, seen or not, so cleared
+//! country heals inward from its edge.
+//!
+//! A nest's creatures are at the level of the country where it stands
+//! (`Hubs::level`), read as they are made: a hub's push lowers them as
+//! the country gives way to it. On quiet ground (`Hubs::quiet`) no nest
+//! stands, and none is raised there.
+//!
+//! A den outlives the server where it stands (`at`), and a colony which
+//! of its nests are broken: whatever keeps the world is told of each that
+//! changes ([`Dens::take_changed`], [`Dens::take_changed_colonies`]) and
+//! recalls those it kept. A nest and its pack do not, and come back whole
+//! as a player nears; the ground a den clears is laid again when it next
+//! stands.
 //!
 //! A den is drawn about the tile its pack first stood on, as its
-//! archetype's model, active or cleared, its seed and turn its site's:
+//! archetype's model, standing or wrecked, its seed and turn its site's:
 //! its pieces' circles stand on the map for every walker to go round, the
 //! ground it stands on and [`OPEN`] tiles past it is cleared of all that
 //! grew or lay there as long as it stands, thinning back into what stood
@@ -37,20 +50,21 @@ use std::{collections::HashMap, time::Duration};
 
 use bevy::prelude::*;
 use qrz::{Qrz, DIRECTIONS};
+use serde::{Deserialize, Serialize};
 
 use combat::engagement::{Engagement, EngagementMember, Members};
-use common::den::Habitat;
 use common_bevy::{
     archetype::{calculate_enemy_attributes, EnemyArchetype},
     den::DenLook,
+    hubs::Hubs,
     message::{Do, Event},
     moment::Moment,
+    settings::{Setting, Settings},
     systems::When,
     chunk::{calculate_visible_chunks, loc_to_chunk, ChunkId},
     components::{
         behaviour::Side,
         entity_type::{actor::{ActorIdentity, ActorImpl, Origin}, EntityType},
-        resources::SpawnPoint,
         Loc,
     },
     plugins::nntree::NearestNeighbor,
@@ -64,29 +78,42 @@ use crate::{
     systems::gathering::{roll, Ground},
 };
 
-/// How near a player a site gets its den, or a den its pack back, in tiles
+/// How near a player a den's nest and pack are out in the world, in tiles
 pub const PLACE_RANGE: i32 = 80;
 
 /// Chunks round a player's that hold every site within [`PLACE_RANGE`]
 const PLACE_CHUNKS: u8 = 5;
 
-/// How long a cleared den stands before the site is as the world made it
-pub const DECAY: Duration = Duration::from_secs(600);
-
-/// How often dens are raised and packs brought back
+/// How often dens are tended: packs brought back, broken nests raised
 const TEND: Duration = Duration::from_secs(1);
 
 /// How long a standing nest takes to bring back one of its pack's dead
 pub const RESPAWN: Duration = Duration::from_secs(20);
 
-/// The fewest a den's pack holds; a site's roll may add one
-pub const PACK: u8 = 2;
+/// How long a colony with a nest standing takes to raise one of its
+/// broken nests again, from when it last changed
+pub const REGROW: Duration = Duration::from_secs(600);
+
+/// How long a colony with no nest standing lies dead beside one that
+/// stands before a nest of its own is raised from there
+pub const SPREAD: Duration = Duration::from_secs(3 * 86_400);
+
+/// The fewest and the most groups a den's pack stands in; a site's roll
+/// says which
+pub const GROUPS: (u8, u8) = (2, 4);
+
+/// How many creatures a group holds when whole
+pub const GROUP: u8 = 2;
+
+/// How far from its nest a group past the first stands, in tiles
+pub const GROUP_REACH: i32 = 9;
+
+/// How far a den's creature takes a target from, in tiles: nearer than
+/// its groups stand apart, so each is pulled alone
+pub const NOTICE: u32 = 7;
 
 /// How many levels below its nest's a den's pack stands
 pub const PACK_BELOW: u8 = 3;
-
-/// Tiles from the haven each level of a den lies further out
-pub const STRETCH: i32 = 400;
 
 /// How many tiles a den's search for dry ground round its site may look at
 const SEARCH: usize = 400;
@@ -103,73 +130,162 @@ pub const OPEN: u32 = 4;
 /// world's.
 pub const THIN: u32 = 3;
 
-/// A den site the server has generated, and the den on it, if any.
+// A hub's quiet ground is as wide as a den's creature follows a target
+// from its post, or a nest just past it still sends its pack to the wall.
+const _: () = assert!(common_bevy::hubs::QUIET as i32 == combat::behaviour::LEASH_DISTANCE);
+const _: () = assert!((NOTICE as i32) < GROUP_REACH, "a group is noticed alone only from nearer than the next stands");
+
+/// A den site the server has generated, and the den on it, if one has
+/// come out there.
 #[derive(Clone, Debug)]
 pub struct Site {
     pub tile: Qrz,
-    pub habitat: Habitat,
+    pub place: common::den::Site,
     pub den: Option<Den>,
 }
 
-/// A den: the nest on a site and the pack that lives in it, where it
-/// stands, and how it is.
+/// A den: the nest on a site and the pack that lives in it, and where it
+/// stands. Whether its nest stands or is broken is its colony's to say
+/// ([`Dens::broken`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Den {
     pub archetype: EnemyArchetype,
-    /// Its nest's level; its pack stands [`PACK_BELOW`] under it
-    pub level: u8,
-    /// How many its pack holds when whole
-    pub size: u8,
-    /// Where its pack stands, on dry ground near the site; none until it
+    /// How many groups its pack stands in when whole
+    pub groups: u8,
+    /// Where its nest stands, on dry ground near the site; none until it
     /// has first stood
     pub at: Option<Qrz>,
-    pub state: DenState,
-    /// When it came to be as it is, on the calendar
+    /// What of it is out in the world: nothing while no player is near,
+    /// or its nest is broken
+    pub out: Option<Out>,
+}
+
+/// A den's nest and pack out in the world.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Out {
+    pub nest: Entity,
+    /// Each group's engagement, the nest a member of the first; none for
+    /// a group with no one left of it
+    pub groups: [Option<Entity>; GROUPS.1 as usize],
+    /// When the nest next brings back one of its dead, while it is short
+    /// of any
+    pub refill: Option<Moment>,
+}
+
+/// A colony some of whose nests are broken, or were of late: the nests of
+/// a den lattice cell, as the world names it on each of their sites. One
+/// with every nest standing since the world was made is kept nowhere.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Colony {
+    /// Its sites as the server has found them: which of its colony's
+    /// each is, and its tile. The world names a colony's candidates and
+    /// each one's own ground says whether it is a site, so how many it
+    /// has is how many were found: all of them once the ground round any
+    /// one is generated, which it is before a nest there is struck.
+    pub sites: Vec<(u8, i32, i32)>,
+    /// Which of its sites hold a broken nest
+    pub broken: Vec<u8>,
+    /// When it last changed, a nest broken or raised, on the calendar
     pub since: When,
+    /// When it last had a nest raised with none standing; none where it
+    /// never lay dead
+    #[serde(default)]
+    pub revived: Option<When>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DenState {
-    /// Its nest stands: the nest and its pack's engagement out in the
-    /// world, neither while no player is near, and when it next brings
-    /// back one of its dead, while it is short of any
-    Standing { pack: Option<Entity>, nest: Option<Entity>, refill: Option<Moment> },
-    /// Its nest was broken
-    Cleared,
-}
+impl Colony {
+    fn whole(sites: Vec<(u8, i32, i32)>, now: When) -> Self {
+        Colony { sites, broken: Vec::new(), since: now, revived: None }
+    }
 
-impl DenState {
-    /// A den standing with nothing of it out in the world.
-    pub const UNWATCHED: DenState = DenState::Standing { pack: None, nest: None, refill: None };
-}
+    /// Whether any of its nests stands.
+    pub fn alive(&self) -> bool {
+        self.broken.len() < self.sites.len()
+    }
 
-impl Den {
-    /// Whether the den has decayed by `now`, and the site is as the world
-    /// made it.
-    pub fn decayed(&self, now: When) -> bool {
-        self.state == DenState::Cleared && now >= self.since + DECAY
+    fn is_broken(&self, nth: u8) -> bool {
+        self.broken.contains(&nth)
+    }
+
+    /// Notes its `nth` site, on `tile`; whether it was not known.
+    fn finds(&mut self, nth: u8, tile: (i32, i32)) -> bool {
+        let new = self.sites.iter().all(|&(known, ..)| known != nth);
+        if new {
+            self.sites.push((nth, tile.0, tile.1));
+        }
+        new
+    }
+
+    /// Breaks its `nth` nest; whether it stood.
+    fn breaks(&mut self, nth: u8) -> bool {
+        let stood = !self.is_broken(nth);
+        if stood {
+            self.broken.push(nth);
+        }
+        stood
+    }
+
+    /// Raises every nest due by `now`, where `beside` is the moment the
+    /// first of the colonies beside it to stand has stood from, none
+    /// where none stands, and `quiet` says whether a tile takes no nest.
+    /// Each is raised at the moment it fell due, so a colony found again
+    /// after any while is where it would have been. Whether any was.
+    fn grows(&mut self, now: When, beside: Option<When>, quiet: impl Fn((i32, i32)) -> bool) -> bool {
+        let mut grew = false;
+        loop {
+            let due = match (self.alive(), beside) {
+                (true, _) => self.since + REGROW,
+                (false, Some(beside)) => self.since.max(beside) + SPREAD,
+                (false, None) => break,
+            };
+            let takes = |nth: u8| self.sites.iter().any(|&(site, q, r)| site == nth && !quiet((q, r)));
+            let Some(next) = self.broken.iter().position(|&nth| takes(nth)).filter(|_| now >= due) else { break };
+            if !self.alive() {
+                self.revived = Some(due);
+            }
+            self.broken.remove(next);
+            self.since = due;
+            grew = true;
+        }
+        grew
+    }
+
+    /// Whether nothing of it need be kept at `now`: every nest stands,
+    /// and it has stood long enough to be to the colonies beside it as
+    /// one that never fell.
+    fn settled(&self, now: When) -> bool {
+        self.broken.is_empty() && self.revived.is_none_or(|revived| now >= revived + SPREAD)
     }
 }
 
 /// Every den site the server has generated, by the chunk it lies in, with
-/// the dens on them.
+/// the dens on them; and every colony that is not whole, wherever it is.
 #[derive(Resource, Default)]
 pub struct Dens {
     sites: HashMap<ChunkId, Vec<Site>>,
     /// Dens recalled for sites not yet found, by the site's `(q, r)`.
     recalled: HashMap<(i32, i32), Den>,
-    /// Sites whose den came to stand, was cleared or went since the last
+    /// Every site found, by its colony: which of it each is, and its tile.
+    found: HashMap<(i32, i32), Vec<(u8, i32, i32)>>,
+    colonies: HashMap<(i32, i32), Colony>,
+    /// Sites whose den came to stand somewhere or went since the last
     /// [`Dens::take_changed`].
     changed: Vec<Qrz>,
+    /// Colonies that changed since the last [`Dens::take_changed_colonies`].
+    changed_colonies: Vec<(i32, i32)>,
 }
 
 impl Dens {
     /// Records a site a generated chunk holds, with the den recalled for
     /// it, if any; one already known is kept as it stands, den and all.
-    pub fn found(&mut self, tile: Qrz, habitat: Habitat) {
+    pub fn found(&mut self, tile: Qrz, place: common::den::Site) {
         let sites = self.sites.entry(loc_to_chunk(tile)).or_default();
         if !sites.iter().any(|site| site.tile == tile) {
-            sites.push(Site { tile, habitat, den: self.recalled.remove(&(tile.q, tile.r)) });
+            sites.push(Site { tile, place, den: self.recalled.remove(&(tile.q, tile.r)) });
+            self.found.entry(place.colony).or_default().push((place.nth, tile.q, tile.r));
+            if self.colonies.get_mut(&place.colony).is_some_and(|colony| colony.finds(place.nth, (tile.q, tile.r))) {
+                self.changed_colonies.push(place.colony);
+            }
         }
     }
 
@@ -186,16 +302,37 @@ impl Dens {
         }
     }
 
-    /// The sites whose den changed since the last call: came to stand, was
-    /// cleared, or went.
+    /// Lays `colony`, kept from an earlier run, as colony `id`.
+    pub fn recall_colony(&mut self, id: (i32, i32), colony: Colony) {
+        self.colonies.insert(id, colony);
+    }
+
+    /// The sites whose den changed since the last call: came to stand
+    /// somewhere, or went.
     pub fn take_changed(&mut self) -> Vec<Qrz> {
         std::mem::take(&mut self.changed)
+    }
+
+    /// The colonies that changed since the last call.
+    pub fn take_changed_colonies(&mut self) -> Vec<(i32, i32)> {
+        std::mem::take(&mut self.changed_colonies)
+    }
+
+    /// Colony `id` as it is kept; none where every nest of it stands as
+    /// the world made it.
+    pub fn colony(&self, id: (i32, i32)) -> Option<&Colony> {
+        self.colonies.get(&id)
+    }
+
+    /// Whether the nest on the site at `place` is broken.
+    pub fn broken(&self, place: common::den::Site) -> bool {
+        self.colonies.get(&place.colony).is_some_and(|colony| colony.is_broken(place.nth))
     }
 
     /// Whether a den's nest stands within `reach` tiles of `tile`.
     pub fn stands_within(&self, tile: Qrz, reach: i32) -> bool {
         self.sites.values().flatten().any(|site| {
-            site.den.is_some_and(|den| matches!(den.state, DenState::Standing { .. }) && den.at.unwrap_or(site.tile).flat_distance(&tile) <= reach)
+            site.den.is_some_and(|den| den.at.unwrap_or(site.tile).flat_distance(&tile) <= reach) && !self.broken(site.place)
         })
     }
 
@@ -204,28 +341,58 @@ impl Dens {
         self.sites.get(&loc_to_chunk(tile))?.iter().find(|site| site.tile == tile)?.den.filter(|den| den.at.is_some())
     }
 
-    fn standing(&mut self, holds: impl Fn(Option<Entity>, Option<Entity>) -> bool) -> Option<&mut Site> {
-        self.sites.values_mut().flatten()
-            .find(|site| site.den.is_some_and(|den| matches!(den.state, DenState::Standing { pack, nest, .. } if holds(pack, nest))))
-    }
-
-    /// Notes that `pack` is gone from the world, its nest with it: its den
-    /// stands unwatched, to come back whole.
-    pub fn ended(&mut self, pack: Entity) {
-        if let Some(den) = self.standing(|held, _| held == Some(pack)).and_then(|site| site.den.as_mut()) {
-            den.state = DenState::UNWATCHED;
+    /// Notes that `engagement` is gone from the world. The one a nest
+    /// stands with goes only abandoned, so its den has nothing out, to
+    /// come back whole; any other is a group with no one left of it.
+    pub fn ended(&mut self, engagement: Entity) {
+        for den in self.sites.values_mut().flatten().filter_map(|site| site.den.as_mut()) {
+            match den.out.and_then(|out| out.groups.iter().position(|group| *group == Some(engagement))) {
+                Some(0) => den.out = None,
+                Some(group) => den.out.as_mut().expect("it has a group out").groups[group] = None,
+                None => {}
+            }
         }
     }
 
-    /// Notes that `actor` died at `now`: the nest of a standing den, that
-    /// den is cleared from then.
+    /// Notes that `actor` died at `now`: the nest of a den, that nest is
+    /// broken from then, and what lives of its pack is the last of it.
     pub fn died(&mut self, actor: Entity, now: When) {
-        let Some(site) = self.standing(|_, nest| nest == Some(actor)) else { return };
-        let tile = site.tile;
+        let Some(site) = self.sites.values_mut().flatten().find(|site| site.den.is_some_and(|den| den.out.is_some_and(|out| out.nest == actor))) else { return };
+        let place = site.place;
         if let Some(den) = site.den.as_mut() {
-            *den = Den { state: DenState::Cleared, since: now, ..*den };
+            den.out = None;
         }
-        self.changed.push(tile);
+        let colony = self.colonies.entry(place.colony).or_insert_with(|| Colony::whole(self.found.get(&place.colony).cloned().unwrap_or_default(), now));
+        colony.breaks(place.nth);
+        colony.since = now;
+        self.changed_colonies.push(place.colony);
+    }
+
+    /// Raises every broken nest due by `now`, and forgets each colony
+    /// whole again for long enough: a colony's own by its standing nests,
+    /// a dead one's from the first colony beside it to stand, the six a
+    /// step from its own number, one never broken having stood for ever.
+    /// No nest is raised on a tile `hubs` keeps quiet.
+    pub fn grow(&mut self, now: When, hubs: &Hubs) {
+        let mut ids: Vec<(i32, i32)> = self.colonies.keys().copied().collect();
+        ids.sort_unstable();
+        for id in ids {
+            let beside = DIRECTIONS
+                .iter()
+                .filter_map(|step| match self.colonies.get(&(id.0 + step.q, id.1 + step.r)) {
+                    None => Some(When(0)),
+                    Some(colony) => colony.alive().then(|| colony.revived.unwrap_or(When(0))),
+                })
+                .min();
+            let colony = self.colonies.get_mut(&id).expect("it is one of the colonies kept");
+            let grew = colony.grows(now, beside, |tile| hubs.quiet(tile));
+            if colony.settled(now) {
+                self.colonies.remove(&id);
+            }
+            if grew || !self.colonies.contains_key(&id) {
+                self.changed_colonies.push(id);
+            }
+        }
     }
 }
 
@@ -234,12 +401,6 @@ impl Dens {
 #[derive(Message, Clone, Copy, Debug)]
 pub struct EngagementEnded {
     pub engagement: Entity,
-}
-
-/// The level of a den on a site `tile`: its distance from the `haven`
-/// over [`STRETCH`], whoever finds it.
-pub fn den_level(tile: Qrz, haven: Qrz) -> u8 {
-    (tile.flat_distance(&haven) / STRETCH).clamp(0, u8::MAX as i32) as u8
 }
 
 /// The nearest dry ground the server has materialized to `site` and
@@ -268,18 +429,43 @@ pub fn dry_ground_near(map: &Map, site: Qrz, taken: &[Qrz]) -> Option<Qrz> {
     None
 }
 
-/// Hears every frame which packs left the world and which nests were
-/// broken, and each [`TEND`] raises a den on every site near a player that
-/// has none, brings out the nest and pack of a standing den that has
-/// neither, brings back one of a short pack's dead when its time comes,
-/// and lets a decayed den go. A pack stands on the ground the map holds,
-/// never read from the world's generator, which may be busy building
-/// elsewhere for longer than a frame.
+/// Where the `group`th of the `groups` a den on `site` holds stands, its
+/// nest on `at`: the first with the nest, the others [`GROUP_REACH`] out,
+/// set evenly round it at the site's own turn, each on dry ground the map
+/// holds there and with the nest where it holds none.
+fn post(map: &Map, site: Qrz, at: Qrz, group: usize, groups: u8) -> Qrz {
+    if group == 0 {
+        return at;
+    }
+    let outer = (groups as usize).saturating_sub(1).max(1);
+    let turn = common::sway(site.q, site.r, common::TILE_SLOTS as usize).variation as usize;
+    let step = DIRECTIONS[(turn + (group - 1) * DIRECTIONS.len() / outer) % DIRECTIONS.len()];
+    let (q, r) = (at.q + step.q * GROUP_REACH, at.r + step.r * GROUP_REACH);
+    match map.get_by_qr(q, r) {
+        Some((floor, _)) if map.water_at(q, r).is_none() => floor + Qrz::Z,
+        _ => at,
+    }
+}
+
+/// Ages every hub to the calendar's moment, the country giving way to
+/// each a level in `Setting::LevelHours`.
+pub fn age_hubs(mut hubs: ResMut<Hubs>, settings: Res<Settings>, runtime: Res<combat::RunTime>, time: Res<Time>) {
+    hubs.age(runtime.when(&time), settings.get(Setting::LevelHours));
+}
+
+/// Hears every frame which engagements left the world and which nests
+/// were broken, and each [`TEND`] raises the broken nests that are due,
+/// takes the den off every site near a player that has come to lie on
+/// quiet ground, brings out the nest and pack of a den that stands with
+/// nothing out, and brings back one of a short pack's dead when its time
+/// comes. A pack stands on the ground the map holds, never read from the
+/// world's generator, which may be busy building elsewhere for longer
+/// than a frame.
 #[allow(clippy::too_many_arguments)]
 pub fn tend_dens(
     mut dens: ResMut<Dens>,
     mut ended: MessageReader<EngagementEnded>,
-    mut done: MessageReader<Do>,
+    mut messages: ParamSet<(MessageReader<Do>, MessageWriter<Do>)>,
     lobby: Res<Lobby>,
     players: Query<&Loc>,
     engagements: Query<Option<&Members>, With<Engagement>>,
@@ -288,15 +474,14 @@ pub fn tend_dens(
     time: Res<Time>,
     runtime: Res<combat::RunTime>,
     dice: Res<combat::dice::Dice>,
-    haven: Option<Res<SpawnPoint>>,
-    hubs: Res<common_bevy::hubs::Hubs>,
+    hubs: Res<Hubs>,
     mut next: Local<Moment>,
     mut commands: Commands,
 ) {
     let now = Moment::ZERO + time.elapsed();
-    // What is kept of a den, when it came to be as it is, is the calendar's
+    // What is kept of a colony, when it last changed, is the calendar's
     let when = runtime.when(&time);
-    for message in done.read() {
+    for message in messages.p0().read() {
         if let Do { event: Event::Despawn { ent, died: true } } = message {
             dens.died(*ent, when);
         }
@@ -304,77 +489,102 @@ pub fn tend_dens(
     for ending in ended.read() {
         dens.ended(ending.engagement);
     }
-    let Some(haven) = haven else { return };
     if now < *next {
         return;
     }
     *next = now + TEND;
-    let mut taken: Vec<Qrz> = dens.sites.values().flatten().filter_map(|site| site.den?.at).collect();
-    let mut changed = Vec::new();
+    dens.grow(when, &hubs);
+
+    let Dens { sites, found, colonies, changed, changed_colonies, .. } = &mut *dens;
+    let mut taken: Vec<Qrz> = sites.values().flatten().filter_map(|site| site.den?.at).collect();
+    let mut quieted: Vec<Entity> = Vec::new();
+    let map = &*map;
 
     for &player in lobby.right_values() {
         let Ok(loc) = players.get(player) else { continue };
         for chunk in calculate_visible_chunks(loc_to_chunk(**loc), PLACE_CHUNKS) {
-            let Some(sites) = dens.sites.get_mut(&chunk) else { continue };
+            let Some(sites) = sites.get_mut(&chunk) else { continue };
             for site in sites.iter_mut().filter(|site| site.tile.flat_distance(loc) <= PLACE_RANGE) {
-                if site.den.is_some_and(|den| den.decayed(when)) {
-                    info!("den decayed at ({}, {})", site.tile.q, site.tile.r);
-                    site.den = None;
-                    changed.push(site.tile);
+                let (tile, place) = ((site.tile.q, site.tile.r), site.place);
+                if hubs.quiet(tile) {
+                    if let Some(den) = site.den.take() {
+                        info!("den gone from quiet ground at ({}, {})", tile.0, tile.1);
+                        quieted.extend(den.out.iter().flat_map(|out| out.groups).flatten());
+                        changed.push(site.tile);
+                    }
+                    if colonies.entry(place.colony).or_insert_with(|| Colony::whole(found.get(&place.colony).cloned().unwrap_or_default(), when)).breaks(place.nth) {
+                        changed_colonies.push(place.colony);
+                    }
+                    continue;
                 }
-                // A hub's core holds its ground, and the haven's guard
-                // its own: a site on either gets no den
-                let tile = (site.tile.q, site.tile.r);
-                if site.den.is_none() && (hubs.guarded(tile) || hubs.holding(tile).is_some()) {
+                if colonies.get(&place.colony).is_some_and(|colony| colony.is_broken(place.nth)) {
                     continue;
                 }
                 let den = site.den.get_or_insert_with(|| Den {
-                    archetype: EnemyArchetype::denning_on(site.habitat),
-                    level: den_level(site.tile, haven.0),
+                    archetype: EnemyArchetype::denning_on(place.habitat),
                     // Rolled by the site, so a seed packs the same dens
-                    size: PACK + dice.roll(("pack", site.tile)).pick(2) as u8,
+                    groups: GROUPS.0 + dice.roll(("pack", site.tile)).pick((GROUPS.1 - GROUPS.0 + 1) as usize) as u8,
                     at: None,
-                    state: DenState::UNWATCHED,
-                    since: when,
+                    out: None,
                 });
-                let DenState::Standing { pack, nest, refill } = den.state else { continue };
-                let map = &*map;
-                let elevation = |at: Qrz| move |q: i32, r: i32| map.get_by_qr(q, r).map_or(at.z - 1, |(floor, _)| floor.z);
-                let below = den.level.saturating_sub(PACK_BELOW);
-                if let (Some(pack), Some(at)) = (pack, den.at) {
-                    if let Ok(members) = engagements.get(pack) {
-                        let living = members.map_or(0, |members| members.all().filter(|&member| Some(member) != nest).count());
-                        let refill = match refill {
-                            _ if living >= den.size as usize => None,
-                            None => Some(now + RESPAWN),
-                            Some(due) if now >= due => {
-                                combat::engagement::spawn_member(&tuning, pack, at, living, den.archetype, Side::WILD, below, elevation(at), &mut commands, &time);
-                                None
+                let level = hubs.level(tile);
+                let below = level.saturating_sub(PACK_BELOW);
+                // A member on a tile the map does not hold yet stands level
+                // with its post.
+                let elevation = |post: Qrz| move |q: i32, r: i32| map.get_by_qr(q, r).map_or(post.z - 1, |(floor, _)| floor.z);
+                if let (Some(mut out), Some(at)) = (den.out, den.at) {
+                    let nest = out.nest;
+                    let living = |group: Option<Entity>| {
+                        group.and_then(|group| engagements.get(group).ok()).map_or(0, |members| members.map_or(0, |members| members.all().filter(|&member| member != nest).count()))
+                    };
+                    let short = (0..den.groups as usize).find(|&group| living(out.groups[group]) < GROUP as usize);
+                    out.refill = match (short, out.refill) {
+                        (None, _) => None,
+                        (Some(_), None) => Some(now + RESPAWN),
+                        (Some(group), Some(due)) if now >= due => {
+                            let post = post(map, site.tile, at, group, den.groups);
+                            match out.groups[group].filter(|&held| engagements.get(held).is_ok()) {
+                                Some(held) => {
+                                    combat::engagement::spawn_member(&tuning, held, post, living(Some(held)), den.archetype, Side::WILD, below, NOTICE, elevation(post), &mut commands, &time);
+                                }
+                                None => {
+                                    out.groups[group] = Some(combat::engagement::spawn_engagement(&tuning, post, den.archetype, Side::WILD, below, NOTICE, 1, elevation(post), &mut commands, &time));
+                                }
                             }
-                            waiting => waiting,
-                        };
-                        den.state = DenState::Standing { pack: Some(pack), nest, refill };
-                        continue;
-                    }
+                            None
+                        }
+                        (_, waiting) => waiting,
+                    };
+                    den.out = Some(out);
+                    continue;
                 }
-                let Some(at) = den.at.or_else(|| dry_ground_near(&map, site.tile, &taken)) else { continue };
+                let Some(at) = den.at.or_else(|| dry_ground_near(map, site.tile, &taken)) else { continue };
                 if den.at.is_none() {
                     taken.push(at);
                     changed.push(site.tile);
-                    info!("den of {} {:?} at level {} on {:?} ground at ({}, {})", den.size, den.archetype, den.level, site.habitat, at.q, at.r);
                 }
+                info!("den of {} groups of {:?} at level {level} on {:?} ground at ({}, {})", den.groups, den.archetype, place.habitat, at.q, at.r);
                 den.at = Some(at);
-                // A member on a tile the map does not hold yet stands level
-                // with the den's own.
-                let pack = combat::engagement::spawn_engagement(
-                    &tuning, at, den.archetype, Side::WILD, below, den.size, elevation(at), &mut commands, &time,
-                );
-                let nest = spawn_nest(&tuning, pack, at, den.archetype, den.level, &mut commands, &time);
-                den.state = DenState::Standing { pack: Some(pack), nest: Some(nest), refill: None };
+                let mut groups = [None; GROUPS.1 as usize];
+                for (group, held) in groups.iter_mut().enumerate().take(den.groups as usize) {
+                    let post = post(map, site.tile, at, group, den.groups);
+                    *held = Some(combat::engagement::spawn_engagement(&tuning, post, den.archetype, Side::WILD, below, NOTICE, GROUP, elevation(post), &mut commands, &time));
+                }
+                let nest = spawn_nest(&tuning, groups[0].expect("a den has a first group"), at, den.archetype, level, &mut commands, &time);
+                den.out = Some(Out { nest, groups, refill: None });
             }
         }
     }
-    dens.changed.extend(changed);
+
+    // A den gone from quiet ground takes what it had out with it, as an
+    // engagement abandoned goes
+    let mut writer = messages.p1();
+    for group in quieted {
+        for member in engagements.get(group).ok().flatten().into_iter().flat_map(|members| members.all()) {
+            writer.write(Do { event: Event::Despawn { ent: member, died: false } });
+        }
+        commands.entity(group).try_despawn();
+    }
 }
 
 /// Spawns the nest of a den of `archetype` at `level` on `at`, a member of
@@ -396,10 +606,11 @@ fn spawn_nest(tuning: &Tuning, pack: Entity, at: Qrz, archetype: EnemyArchetype,
     nest
 }
 
-/// The den on `site` as drawn, about the tile its pack stands on, once
-/// it has first stood: its seed and turn the site's own, from a slot past
-/// the tile's, so no tree's sway is its.
-pub fn shown(site: &Site) -> Option<(Qrz, DenLook)> {
+/// The den on `site` as drawn, about the tile its nest stands on, once
+/// it has first stood, as its wreck where its nest is `broken`: its seed
+/// and turn the site's own, from a slot past the tile's, so no tree's
+/// sway is its.
+pub fn shown(site: &Site, broken: bool) -> Option<(Qrz, DenLook)> {
     let den = site.den?;
     let at = den.at?;
     let sway = common::sway(site.tile.q, site.tile.r, common::TILE_SLOTS as usize);
@@ -407,7 +618,7 @@ pub fn shown(site: &Site) -> Option<(Qrz, DenLook)> {
         archetype: den.archetype,
         seed: (sway.variation % 256) as u8,
         yaw: sway.yaw as f32,
-        cleared: den.state == DenState::Cleared,
+        cleared: broken,
     };
     Some((at, look))
 }
@@ -449,13 +660,13 @@ pub fn show_dens(
     map: Res<Map>,
     mut ground: Ground,
     lobby: Res<Lobby>,
-    settings: Res<common_bevy::settings::Settings>,
+    settings: Res<Settings>,
     players: Query<&Loc>,
     mut drawn: Local<HashMap<Qrz, Drawn>>,
     mut told: Local<HashMap<Entity, HashMap<Qrz, DenLook>>>,
     mut writer: MessageWriter<Do>,
 ) {
-    let now: HashMap<Qrz, DenLook> = dens.sites.values().flatten().filter_map(shown).collect();
+    let now: HashMap<Qrz, DenLook> = dens.sites.values().flatten().filter_map(|site| shown(site, dens.broken(site.place))).collect();
     drawn.retain(|at, den| {
         if now.contains_key(at) {
             return true;
@@ -493,7 +704,7 @@ pub fn show_dens(
         drawn.insert(at, Drawn { look, took });
     }
 
-    let sight = settings.get(common_bevy::settings::Setting::DenSight);
+    let sight = settings.get(Setting::DenSight);
     told.retain(|player, _| lobby.get_by_right(player).is_some());
     for &player in lobby.right_values() {
         let Ok(loc) = players.get(player) else { continue };
@@ -516,42 +727,109 @@ pub fn show_dens(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::den::Habitat;
 
-    #[test]
-    fn a_den_is_deeper_the_further_from_the_haven() {
-        let haven = Qrz { q: 107289, r: -7677, z: 0 };
-        let at = |tiles: i32| Qrz { q: haven.q + tiles, r: haven.r, z: 0 };
-        assert_eq!(den_level(at(0), haven), 0, "at the haven, the weakest");
-        assert!(den_level(at(STRETCH * 4), haven) > den_level(at(STRETCH), haven), "further out, deeper");
-        assert_eq!(den_level(at(STRETCH * 100), haven), 100, "past any player's level");
+    const DAY: Duration = Duration::from_secs(86_400);
+
+    fn place(colony: (i32, i32), nth: u8, _of: u8) -> common::den::Site {
+        common::den::Site { habitat: Habitat::Open, colony, nth }
+    }
+
+    /// A den out in the world on the `nth` of the `of` sites found of
+    /// `colony`, its nest and the engagements of its two groups.
+    fn out(dens: &mut Dens, colony: (i32, i32), nth: u8, of: u8, from: u32) -> (Qrz, Entity, [Entity; 2]) {
+        let tile = |nth: u8| Qrz { q: colony.0 * 500 + nth as i32 * 30, r: colony.1 * 500, z: 0 };
+        let site = tile(nth);
+        let (nest, groups) = (Entity::from_raw_u32(from).unwrap(), [Entity::from_raw_u32(from + 1).unwrap(), Entity::from_raw_u32(from + 2).unwrap()]);
+        for other in 0..of {
+            dens.found(tile(other), place(colony, other, of));
+        }
+        dens.sites.get_mut(&loc_to_chunk(site)).unwrap().iter_mut().find(|held| held.tile == site).unwrap().den = Some(Den {
+            archetype: EnemyArchetype::Berserker,
+            groups: 2,
+            at: Some(site),
+            out: Some(Out { nest, groups: [Some(groups[0]), Some(groups[1]), None, None], refill: None }),
+        });
+        (site, nest, groups)
     }
 
     #[test]
-    fn a_den_is_cleared_when_its_nest_is_broken_and_an_abandoned_one_waits_whole() {
-        let site = Qrz { q: 0, r: 0, z: 0 };
-        let (pack, nest, member) = (Entity::from_raw_u32(7).unwrap(), Entity::from_raw_u32(8).unwrap(), Entity::from_raw_u32(9).unwrap());
-        let out = DenState::Standing { pack: Some(pack), nest: Some(nest), refill: None };
+    fn a_group_wiped_is_one_group_gone_and_a_nest_abandoned_waits_whole() {
         let mut dens = Dens::default();
-        dens.found(site, Habitat::Open);
-        let den = |dens: &Dens| dens.sites[&loc_to_chunk(site)][0].den.unwrap();
-        dens.sites.get_mut(&loc_to_chunk(site)).unwrap()[0].den = Some(Den {
-            archetype: EnemyArchetype::Berserker, level: 0, size: 2, at: Some(site),
-            state: out, since: When(0),
-        });
+        let (site, nest, groups) = out(&mut dens, (0, 0), 0, 2, 7);
+        let den = |dens: &Dens| dens.den_on(site).unwrap();
 
-        dens.ended(pack);
-        assert_eq!(den(&dens).state, DenState::UNWATCHED, "abandoned, it stands with nothing out");
+        dens.ended(groups[1]);
+        assert_eq!(den(&dens).out.unwrap().groups, [Some(groups[0]), None, None, None], "its nest stands, and brings the group back");
+        dens.died(groups[1], When(5));
+        assert!(!dens.broken(place((0, 0), 0, 2)), "a creature dead, its nest stands");
 
-        dens.sites.get_mut(&loc_to_chunk(site)).unwrap()[0].den.as_mut().unwrap().state = out;
-        let killed = When(10_000);
-        dens.died(member, killed);
-        assert_eq!(den(&dens).state, out, "one of its pack dead, it stands");
-        dens.died(nest, killed);
-        assert_eq!(den(&dens).state, DenState::Cleared);
-        dens.ended(pack);
-        assert_eq!(den(&dens).state, DenState::Cleared, "and stays cleared when the last of its pack goes");
-        assert!(!den(&dens).decayed(killed + DECAY - Duration::from_secs(1)), "cleared, it stands a while");
-        assert!(den(&dens).decayed(killed + DECAY), "then it is gone");
+        dens.ended(groups[0]);
+        assert_eq!(den(&dens).out, None, "abandoned, it stands with nothing out");
+        assert!(!dens.broken(place((0, 0), 0, 2)));
+
+        dens.sites.get_mut(&loc_to_chunk(site)).unwrap().iter_mut().find(|held| held.tile == site).unwrap().den.as_mut().unwrap().out = Some(Out { nest, groups: [Some(groups[0]), None, None, None], refill: None });
+        dens.died(nest, When(10_000));
+        assert!(dens.broken(place((0, 0), 0, 2)), "its nest broken, it is broken");
+        assert_eq!(den(&dens).out, None);
+        assert!(!dens.stands_within(site, 5), "and stands no more");
+        assert_eq!(dens.take_changed_colonies(), vec![(0, 0)]);
+    }
+
+    /// A colony raises its broken nests again while one stands, a dead
+    /// one only from a colony standing beside it and far more slowly, and
+    /// cleared country heals from its edge inward.
+    #[test]
+    fn a_colony_regrows_from_its_own_and_a_dead_one_from_beside_it() {
+        let hubs = Hubs::new((100_000, 0));
+        let broke = When(1_000_000);
+        let mut dens = Dens::default();
+        // One nest of two broken at (0, 0); (1, 0) and (2, 0) dead, each
+        // of one nest; every colony round them whole
+        for (colony, nth, of, from) in [((0, 0), 0, 2, 10), ((1, 0), 0, 1, 20), ((2, 0), 0, 1, 30)] {
+            let (_, nest, _) = out(&mut dens, colony, nth, of, from);
+            dens.died(nest, broke);
+        }
+        // Walled in: the colonies beside the dead two are dead as well, but for each other and (0, 0)
+        for (colony, from) in [((2, -1), 40), ((3, -1), 50), ((3, 0), 60), ((2, 1), 70), ((1, 1), 80), ((0, 1), 90), ((1, -1), 100)] {
+            let (_, nest, _) = out(&mut dens, colony, 0, 1, from);
+            dens.died(nest, broke);
+        }
+        let broken = |dens: &Dens, colony| dens.broken(place(colony, 0, 1));
+
+        dens.grow(broke + REGROW - Duration::from_secs(1), &hubs);
+        assert!(dens.broken(place((0, 0), 0, 2)), "not before its time");
+        dens.grow(broke + REGROW, &hubs);
+        assert!(!dens.broken(place((0, 0), 0, 2)), "a colony with a nest standing raises its broken one");
+        assert!(broken(&dens, (1, 0)) && broken(&dens, (2, 0)), "a dead one waits far longer");
+
+        dens.grow(broke + SPREAD, &hubs);
+        assert!(!broken(&dens, (1, 0)), "then a nest is raised from the colony standing beside it");
+        assert!(broken(&dens, (2, 0)), "and the one past it waits on that one");
+        dens.grow(broke + SPREAD + SPREAD - Duration::from_secs(1), &hubs);
+        assert!(broken(&dens, (2, 0)));
+        // Found again long after, it is where it would have been
+        for _ in 0..4 {
+            dens.grow(broke + SPREAD * 40, &hubs);
+        }
+        assert!(!broken(&dens, (2, 0)) && !broken(&dens, (3, 0)));
+        assert_eq!(dens.colony((2, 0)), None, "whole for long enough, nothing of it is kept");
+    }
+
+    /// No nest is raised on quiet ground, however long it waits.
+    #[test]
+    fn no_nest_is_raised_on_quiet_ground() {
+        let mut hubs = Hubs::new((100_000, 0));
+        let mut dens = Dens::default();
+        let (site, nest, _) = out(&mut dens, (0, 0), 0, 2, 10);
+        let (far, far_nest, _) = out(&mut dens, (9, 9), 0, 2, 20);
+        hubs.founded((site.q, site.r));
+        assert!(hubs.quiet((site.q, site.r)) && !hubs.quiet((far.q, far.r)));
+        dens.died(nest, When(0));
+        dens.died(far_nest, When(0));
+        dens.grow(When(0) + DAY * 400, &hubs);
+        assert!(dens.broken(place((0, 0), 0, 2)), "a hub holds its ground");
+        assert!(!dens.broken(place((9, 9), 0, 2)));
     }
 
     /// Every piece of every den, at every seed and turn, stands on ground

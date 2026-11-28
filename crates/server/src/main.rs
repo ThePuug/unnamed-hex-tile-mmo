@@ -73,9 +73,10 @@ fn main() {
         LogPlugin {
             level: bevy::log::Level::TRACE,
             // world=warn keeps the terrain pipeline's per-tile tracing spans
-            // disabled — at debug they cost real time on the hot path.
+            // disabled — at debug they cost real time on the hot path. The
+            // rivers say when a continent's are routed, once, at info.
             filter:  "wgpu=error,bevy=warn,renetcode=warn,renet=warn,sqlx=warn,polling=warn,async_io=warn,".to_owned()
-                    +"server=trace,world=warn,"
+                    +"server=trace,world=warn,world::events::water=info,"
                     ,
             custom_layer: |_| None,
             ..default()
@@ -159,7 +160,7 @@ fn main() {
         common_bevy::systems::movement::update_burden,
         engagement_cleanup::update_engagement_proximity.run_if(on_timer(Duration::from_secs(1))),
         engagement_cleanup::cleanup_engagements.run_if(on_timer(Duration::from_secs(5))),
-        crate::systems::dens::tend_dens,
+        (crate::systems::dens::age_hubs.run_if(on_timer(Duration::from_secs(1))), crate::systems::dens::tend_dens).chain(),
         crate::systems::dens::show_dens.run_if(on_timer(Duration::from_secs(1))),
         world::do_spawn,
         world::try_spawn,

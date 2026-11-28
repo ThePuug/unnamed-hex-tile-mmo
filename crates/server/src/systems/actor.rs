@@ -18,7 +18,7 @@ use common_bevy::{
 use crate::resources::event_registry::EventRegistry;
 use crate::plugins::metrics::SystemTimings;
 use crate::systems::{dens::Dens, gathering::WorldChanges};
-use common::den::Habitat;
+use common::den::Site;
 
 
 
@@ -44,7 +44,7 @@ pub const MAX_CHUNK_TASKS: usize = 16;
 /// async metrics.
 #[derive(Resource, Default)]
 pub struct ChunkTaskQueue {
-    tasks: Vec<(ChunkId, Task<(TerrainChunk, Vec<(Qrz, Habitat)>, f32)>)>,
+    tasks: Vec<(ChunkId, Task<(TerrainChunk, Vec<(Qrz, Site)>, f32)>)>,
     /// Chunks currently being generated (avoid duplicate tasks).
     in_flight: std::collections::HashSet<ChunkId>,
     /// Cache-missed chunks awaiting a task slot, drained nearest-first.
@@ -206,7 +206,7 @@ pub fn do_incremental(
 
 /// Generate a chunk of terrain tiles, and the den sites among them (pure
 /// computation, no ECS access).
-pub(crate) fn generate_chunk(chunk_id: ChunkId, registry: &EventRegistry) -> (TerrainChunk, Vec<(Qrz, Habitat)>) {
+pub(crate) fn generate_chunk(chunk_id: ChunkId, registry: &EventRegistry) -> (TerrainChunk, Vec<(Qrz, Site)>) {
     let mut tiles: tinyvec::ArrayVec<[(Qrz, EntityType, Option<i32>, i8); 272]> = tinyvec::ArrayVec::new();
     let mut dens = Vec::new();
     let coords: Vec<(i32, i32)> = chunk::chunk_tiles(chunk_id).collect();
@@ -220,8 +220,8 @@ pub(crate) fn generate_chunk(chunk_id: ChunkId, registry: &EventRegistry) -> (Te
         let qrz = Qrz { q, r, z };
         let typ = EntityType::Decorator(Decorator { cover, is_solid: true });
         tiles.push((qrz, typ, water, ground.fine));
-        if let Some(habitat) = registry.den_at(q, r) {
-            dens.push((qrz, habitat));
+        if let Some(site) = registry.den_at(q, r) {
+            dens.push((qrz, site));
         }
     }
 
@@ -377,8 +377,8 @@ pub fn poll_chunk_tasks(
             }
             world_cache.chunks.insert(chunk_id, Arc::clone(&chunk));
             world_cache.access_order.get_or_insert(chunk_id, || ());
-            for (site, habitat) in dens {
-                den_sites.found(site, habitat);
+            for (tile, site) in dens {
+                den_sites.found(tile, site);
             }
 
             let wire_tiles = merge_and_pack(&chunk, &map, &changes);

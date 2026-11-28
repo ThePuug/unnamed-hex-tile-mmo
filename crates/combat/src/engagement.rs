@@ -126,14 +126,17 @@ pub fn engaging_at(from: Qrz, dir: Qrz, elevation: impl Fn(i32, i32) -> i32) -> 
 }
 
 /// Spawn an engagement of `npc_count` NPCs of `archetype` at `level`, on
-/// `side`, round `location`; each stands a tile above the ground
-/// `elevation` gives at its column. Returns the engagement.
+/// `side`, round `location`, each taking a target from `notice` tiles; each
+/// stands a tile above the ground `elevation` gives at its column. Returns
+/// the engagement.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_engagement(
     tuning: &Tuning,
     location: Qrz,
     archetype: EnemyArchetype,
     side: Side,
     level: u8,
+    notice: u32,
     npc_count: u8,
     elevation: impl Fn(i32, i32) -> i32,
     commands: &mut Commands,
@@ -149,7 +152,7 @@ pub fn spawn_engagement(
         .id();
 
     for i in 0..npc_count {
-        spawn_member(tuning, engagement_entity, location, i as usize, archetype, side, level, &elevation, commands, time);
+        spawn_member(tuning, engagement_entity, location, i as usize, archetype, side, level, notice, &elevation, commands, time);
     }
 
     engagement_entity
@@ -157,8 +160,8 @@ pub fn spawn_engagement(
 
 /// Spawns one NPC of `archetype` at `level` into `engagement`, on `side`,
 /// in the `index`th place round `location`, a tile above the ground
-/// `elevation` gives there. The engagement must exist, or be spawned by
-/// the same commands before this.
+/// `elevation` gives there, taking a target from `notice` tiles. The
+/// engagement must exist, or be spawned by the same commands before this.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_member(
     tuning: &Tuning,
@@ -168,6 +171,7 @@ pub fn spawn_member(
     archetype: EnemyArchetype,
     side: Side,
     level: u8,
+    notice: u32,
     elevation: impl Fn(i32, i32) -> i32,
     commands: &mut Commands,
     time: &Time,
@@ -199,7 +203,7 @@ pub fn spawn_member(
     }
 
     let chase = crate::behaviour::chase::Chase {
-        acquisition_range: crate::behaviour::ACQUISITION_RANGE,
+        acquisition_range: notice,
         leash_distance: crate::behaviour::LEASH_DISTANCE,
     };
     commands.entity(npc_entity).insert((

@@ -23,6 +23,18 @@ impl Habitat {
     pub const ALL: [Habitat; 6] = [Habitat::River, Habitat::Woods, Habitat::Scrub, Habitat::Range, Habitat::Rock, Habitat::Open];
 }
 
+/// A den site as its tile carries it: its ground, and its place in the
+/// colony it is one of. A colony is a cell of a hex lattice, so the
+/// colonies beside it are the six a step of one from its own number. How
+/// many sites a colony has only its sites' own tiles say, each for itself.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct Site {
+    pub habitat: Habitat,
+    pub colony: (i32, i32),
+    /// Which of its colony's sites it is: a number no other of them has
+    pub nth: u8,
+}
+
 /// One piece of a den model as its GLB declares it, in the GLB's axes:
 /// x and z along the ground, y up.
 #[derive(Clone, Copy, Debug, PartialEq)]

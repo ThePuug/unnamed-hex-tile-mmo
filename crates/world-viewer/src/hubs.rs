@@ -7,8 +7,9 @@
 
 use common::network::Identity;
 use common_bevy::{
-    hubs::{HubId, Hubs, HAVEN_GROUND, HAVEN_REACH},
+    hubs::{HubId, Hubs, HAVEN_GROUND},
     plan::What,
+    systems::When,
 };
 
 /// A hearth of the scenario: its tile, and the players at home at it.
@@ -76,6 +77,10 @@ pub fn settle(haven: (i32, i32), hearths: &[Hearth], count: usize) -> Hubs {
             hubs.carry(&plan);
         }
     }
+    // Drawn as the country has given way to them: aged from the
+    // calendar's first moment to one past any hub's last level
+    hubs.age(When(0), 1);
+    hubs.age(When(u64::MAX / 2), 1);
     hubs
 }
 
@@ -128,22 +133,21 @@ impl Canvas<'_> {
 
 /// What a pixel's tile is to the hubs: the hub whose ground holds it,
 /// which hubs' influence reaches it, and whether the haven's guard keeps
-/// it and its influence reaches it.
+/// it.
 #[derive(Clone, PartialEq)]
 struct Read {
     held: Option<HubId>,
     reached: Vec<HubId>,
     guarded: bool,
-    haven: bool,
 }
 
-/// Draws `hubs` over `canvas`: the haven's and every hub's influence as a
-/// wash, whiter the stronger; a hub's ground filled in its hue and
-/// outlined, which is its wall; its reach outlined thin; a dot at each
-/// of its sites, white for a home a player lives in, grey for any other,
-/// and a larger one in its hue at its hearth. The haven is gold: its
-/// guarded ground outlined, its reach outlined thin, a ringed dot at its
-/// point.
+/// Draws `hubs` over `canvas`: every hub's influence as a wash, whiter
+/// the stronger, as it is once the country has given way to it; a hub's
+/// ground filled in its hue and outlined, which is its wall; its reach
+/// outlined thin; a dot at each of its sites, white for a home a player
+/// lives in, grey for any other, and a larger one in its hue at its
+/// hearth. The haven is gold: its guarded ground outlined, a ringed dot
+/// at its point.
 pub fn draw(canvas: &mut Canvas, hubs: &Hubs, _hearths: &[Hearth]) {
     let standing: Vec<(HubId, (i32, i32), u32)> = hubs.each().collect();
     let place = |id: HubId| standing.iter().position(|hub| hub.0 == id).unwrap_or(0);
@@ -151,7 +155,6 @@ pub fn draw(canvas: &mut Canvas, hubs: &Hubs, _hearths: &[Hearth]) {
         held: hubs.holding(tile),
         reached: standing.iter().filter(|hub| hubs.reaches(hub.0, tile)).map(|hub| hub.0).collect(),
         guarded: hubs.guarded(tile),
-        haven: hubs.haven_reaches(tile),
     };
     let (w, h) = (canvas.w, canvas.h);
     let reads: Vec<Read> = (0..w * h).map(|i| read(canvas.tile(i % w, i / w))).collect();
@@ -163,9 +166,6 @@ pub fn draw(canvas: &mut Canvas, hubs: &Hubs, _hearths: &[Hearth]) {
             canvas.blend(px, py, [1.0, 1.0, 1.0], 0.45 * hubs.influence(canvas.tile(px, py)) as f64);
             if let Some(id) = here.held {
                 canvas.blend(px, py, hue(place(id)), 0.3);
-            }
-            if edge(&|other| other.haven != here.haven) {
-                canvas.blend(px, py, GOLD, 0.55);
             }
             if edge(&|other| other.guarded != here.guarded) {
                 canvas.blend(px, py, GOLD, 1.0);
@@ -199,7 +199,7 @@ pub fn draw(canvas: &mut Canvas, hubs: &Hubs, _hearths: &[Hearth]) {
 
 /// Says how every hub of `hubs` stands.
 pub fn report(hubs: &Hubs) {
-    log::info!("  the haven: at {:?}, guarding {HAVEN_GROUND:.0} tiles, influence whole reaching {HAVEN_REACH:.0} tiles", hubs.haven());
+    log::info!("  the haven: at {:?}, guarding {HAVEN_GROUND:.0} tiles", hubs.haven());
     for (id, hearth, size) in hubs.each() {
         log::info!(
             "  {id:?}: hearth {hearth:?}, planned for {}, {} things, a wall of {}, {size} players who defend {}, influence {:.2} reaching {:.0} tiles",

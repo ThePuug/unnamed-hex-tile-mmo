@@ -1,4 +1,4 @@
-//! Keeps the changed world, its dens and its characters past the server, in the
+//! Keeps the changed world, its dens, their colonies and its characters past the server, in the
 //! PostgreSQL at `DATABASE_URL`, or the local one ([`LOCAL`]) where that is
 //! unset. The rest of the server never learns how: kept changes are
 //! recalled into [`WorldChanges`], [`Piles`] and [`Dens`], and kept
@@ -149,6 +149,8 @@ struct Held {
 struct Carried {
     tiles: Vec<(i32, i32)>,
     dens: Vec<Qrz>,
+    /// Each colony, by its number.
+    colonies: Vec<(i32, i32)>,
     /// Each camp, by its hearth.
     camps: Vec<(i32, i32)>,
     /// Each character, and its state as written.
@@ -168,7 +170,7 @@ struct Carried {
 
 impl Carried {
     fn is_empty(&self) -> bool {
-        self.tiles.is_empty() && self.dens.is_empty() && self.camps.is_empty() && self.characters.is_empty() && !self.hubs && !self.calendar && self.leaves.is_empty() && self.spent.is_empty() && self.depots.is_empty() && self.moved.is_empty()
+        self.tiles.is_empty() && self.dens.is_empty() && self.colonies.is_empty() && self.camps.is_empty() && self.characters.is_empty() && !self.hubs && !self.calendar && self.leaves.is_empty() && self.spent.is_empty() && self.depots.is_empty() && self.moved.is_empty()
     }
 }
 
@@ -184,6 +186,8 @@ struct Keeper {
     dirty: HashSet<(i32, i32)>,
     /// Den sites whose den changed since the last write.
     changed_dens: HashSet<Qrz>,
+    /// Colonies that changed since the last write.
+    changed_colonies: HashSet<(i32, i32)>,
     /// Hearths whose camp changed since the last write.
     changed_camps: HashSet<(i32, i32)>,
     /// What each camp holds that this build cannot play.
@@ -244,6 +248,7 @@ impl Keeper {
             accounts: HashMap::new(),
             dirty: HashSet::new(),
             changed_dens: HashSet::new(),
+            changed_colonies: HashSet::new(),
             changed_camps: HashSet::new(),
             camped: HashMap::new(),
             changed_hubs: false,
@@ -343,6 +348,8 @@ impl Keeper {
             }
             batch.dens.push((chunk, (site.q, site.r), dens.den_on(site).and_then(|den| den::kept(&den))));
         }
+        let colonies: Vec<(i32, i32)> = self.changed_colonies.drain().collect();
+        batch.colonies = colonies.iter().map(|&id| (id, dens.colony(id).map(|colony| serde_json::to_string(colony).expect("a colony serializes")))).collect();
 
         let hearths: Vec<(i32, i32)> = self.changed_camps.drain().collect();
         for &(q, r) in &hearths {
@@ -402,7 +409,7 @@ impl Keeper {
                 None => error!("store: {moved:?} names a player whose account this server does not hold; the ledger lacks it"),
             }
         }
-        (Carried { tiles, dens: sites, camps: hearths, characters, hubs: hubs_changed, calendar: calendar_changed, leaves, spent, depots: hubs_left_at, moved, economy: batch.economy }, batch)
+        (Carried { tiles, dens: sites, colonies, camps: hearths, characters, hubs: hubs_changed, calendar: calendar_changed, leaves, spent, depots: hubs_left_at, moved, economy: batch.economy }, batch)
     }
 
     /// The write carrying `carried` landed, was refused or failed.
@@ -438,6 +445,7 @@ impl Keeper {
     fn rewrite(&mut self, carried: Carried) {
         self.dirty.extend(carried.tiles);
         self.changed_dens.extend(carried.dens);
+        self.changed_colonies.extend(carried.colonies);
         self.changed_camps.extend(carried.camps);
         self.changed_hubs |= carried.hubs;
         self.changed_calendar |= carried.calendar;
@@ -473,6 +481,7 @@ fn keep(
     mut hubs: ResMut<Hubs>,
     mut charts: ResMut<Charts>,
     mut depots: ResMut<Depots>,
+    mut dens: ResMut<Dens>,
     mut runtime: ResMut<combat::RunTime>,
     anchor: Res<crate::systems::world::Anchor>,
     time: Res<Time>,
@@ -517,6 +526,14 @@ fn keep(
             error!("store: the depot at {hub:?} holds {} things this build cannot play; the next wagon there writes over them", unplayable.len());
         }
         depots.recall(hub, stacks);
+    }
+    let colonies = block_on(keeper.store.colonies()).unwrap_or_else(|e| panic!("the store's colonies cannot be read: {e}"));
+    info!("store: recalled {} colonies with nests broken", colonies.len());
+    for (id, state) in colonies {
+        match serde_json::from_value(state) {
+            Ok(colony) => dens.recall_colony(id, colony),
+            Err(e) => error!("store: colony {id:?} cannot be read, and stands whole: {e}"),
+        }
     }
     number(&keeper.store, &mut charts);
 }
@@ -620,6 +637,7 @@ fn note(
     // long, though no item moved
     keeper.changed.extend(known.take_left());
     keeper.changed_dens.extend(dens.take_changed());
+    keeper.changed_colonies.extend(dens.take_changed_colonies());
     keeper.changed_camps.extend(camps.take_changed());
     keeper.changed_hubs |= hubs.take_changed();
 }
@@ -675,7 +693,7 @@ fn receive(
                     }
                 }
                 for (site, state) in recalled.dens {
-                    if let Some(den) = den::recalled(state, keeper.when) {
+                    if let Some(den) = den::recalled(state) {
                         dens.recall(site, den);
                     }
                 }
@@ -815,6 +833,7 @@ fn flush_at_exit(
     let (mut dens, mut hubs, mut camps, mut charts, mut depots) = taking.p1();
     keeper.changed_depots.extend(depots.take_changed());
     keeper.changed_dens.extend(dens.take_changed());
+    keeper.changed_colonies.extend(dens.take_changed_colonies());
     keeper.changed_camps.extend(camps.take_changed());
     keeper.changed_hubs |= hubs.take_changed();
     let (charted, spent) = charts.take_changed();

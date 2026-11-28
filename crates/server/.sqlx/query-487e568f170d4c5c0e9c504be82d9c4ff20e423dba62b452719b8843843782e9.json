@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO colony (q, r, state)\n             SELECT q, r, state::JSONB FROM UNNEST($1::INT[], $2::INT[], $3::TEXT[]) AS t(q, r, state)\n             WHERE state IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4Array",
+        "Int4Array",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "487e568f170d4c5c0e9c504be82d9c4ff20e423dba62b452719b8843843782e9"
+}
