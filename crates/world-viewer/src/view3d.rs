@@ -1,12 +1,12 @@
-//! The 3D view: the world's ground over an area, each ladder level drawn as
+//! The 3D view: the world's ground over an area, each water layer level drawn as
 //! its own hex cells by the game's own mesh builders
 //! (`common_bevy::summary_mesh`), so a cell's corners follow the corner rule
 //! and a face between cells out of reach stands as a wall, as the game draws
-//! it. The ladder is read through `Composite::ladders`, the viewer's
+//! it. The water layer is read through `Composite::waters`, the viewer's
 //! inspection of the stack (INV-009); the ground is the composite's.
 //!
 //! An area is built when it is first shown and kept per level and surface;
-//! the ladder's parameters are read from a file, and reloading it builds
+//! the water layer's parameters are read from a file, and reloading it builds
 //! the world again, its top with it.
 
 use std::collections::HashMap;
@@ -28,14 +28,14 @@ use common_bevy::summary::{mesh_region_lattice, summary_lattice};
 use common_bevy::summary_mesh::{build_summary_mesh_region, build_water_mesh_region, MeshRegionKey};
 use common_bevy::surface::height_y;
 use world::events::Composite;
-use world::ladder::geom::{cube_round, pos3};
-use world::ladder::{Params, STAGES};
+use world::water::geom::{cube_round, pos3};
+use world::water::{Params, STAGES};
 
 /// The levels a view shows, finest first, as their width in tiles.
 const LEVELS: [i64; 5] = [1, 3, 9, 27, 81];
 
 #[derive(Parser)]
-#[command(name = "world-viewer 3d", about = "The world's ground in 3D, a ladder level at a time")]
+#[command(name = "world-viewer 3d", about = "The world's ground in 3D, a water layer level at a time")]
 struct Cli {
     /// The tile the view is centred on, as q,r: the haven by default, which
     /// `HAVEN=<q>,<r>` moves as it moves the server's.
@@ -44,14 +44,14 @@ struct Cli {
     /// How far the view reaches either way of its centre, in tiles.
     #[arg(long, default_value_t = 384)]
     radius: i32,
-    /// The ladder's parameters, reloaded with R.
-    #[arg(long, default_value = "crates/world-viewer/ladder.params")]
+    /// The water layer's parameters, reloaded with R.
+    #[arg(long, default_value = "crates/world-viewer/water.params")]
     params: PathBuf,
     /// The level shown first, as its width: 1, 3, 9, 27 or 81.
     #[arg(long, default_value_t = 1)]
     level: i64,
-    /// The surface shown first: ladder, dry or stack.
-    #[arg(long, default_value = "ladder")]
+    /// The surface shown first: water layer, dry or stack.
+    #[arg(long, default_value = "water layer")]
     surface: String,
     /// Water drawn, faces highlighted and lines overlaid from the start.
     #[arg(long)]
@@ -92,7 +92,7 @@ fn pair(s: &str) -> (i32, i32) {
     (a.trim().parse().expect("q"), b.trim().parse().expect("r"))
 }
 
-/// The ladder's parameters from a file of `name = value` lines, `#` a
+/// The water layer's parameters from a file of `name = value` lines, `#` a
 /// comment; a name the file leaves out keeps its default.
 fn read_params(path: &PathBuf) -> Params {
     let mut p = Params::default();
@@ -119,7 +119,7 @@ fn read_params(path: &PathBuf) -> Params {
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Surface {
-    Ladder,
+    Landmass,
     Dry,
     Stack,
 }
@@ -129,28 +129,28 @@ impl Surface {
         match s {
             "dry" => Surface::Dry,
             "stack" => Surface::Stack,
-            _ => Surface::Ladder,
+            _ => Surface::Landmass,
         }
     }
 
     fn next(self) -> Surface {
         match self {
-            Surface::Ladder => Surface::Dry,
+            Surface::Landmass => Surface::Dry,
             Surface::Dry => Surface::Stack,
-            Surface::Stack => Surface::Ladder,
+            Surface::Stack => Surface::Landmass,
         }
     }
 
     fn name(self) -> &'static str {
         match self {
-            Surface::Ladder => "ladder",
-            Surface::Dry => "ladder dry",
+            Surface::Landmass => "water layer",
+            Surface::Dry => "water layer dry",
             Surface::Stack => "stack",
         }
     }
 }
 
-/// The world a view reads: the stack with its ladder, and the stack alone.
+/// The world a view reads: the stack with its water layer, and the stack alone.
 struct Worlds {
     world: Composite,
     stack: Composite,
@@ -559,19 +559,19 @@ fn build(worlds: &Worlds, centre: (i32, i32), radius: i32, w: i64, surface: Surf
             }
         }
         _ => {
-            let ladders = worlds.world.ladders().expect("the standard stack's ladders");
+            let waters = worlds.world.waters().expect("the standard stack's water layers");
             let at: Vec<(i64, i64)> = cells.iter().map(|&(a, b)| (a as i64, b as i64)).collect();
-            for (&c, cell) in cells.iter().zip(ladders.cells(w, &at)) {
+            for (&c, cell) in cells.iter().zip(waters.cells(w, &at)) {
                 let Some(cell) = cell else { continue };
                 heights.insert(c, if surface == Surface::Dry { cell.zd } else { cell.z } as i32);
-                if surface == Surface::Ladder {
+                if surface == Surface::Landmass {
                     if let Some(s) = cell.water {
                         water.insert(c, s.round() as i32);
                     }
                 }
             }
-            if let Some(site) = ladders.site_of(centre.0, centre.1) {
-                info!("{}", ladders.with(site, |l| timings(&l.terrain().ladder())));
+            if let Some(site) = waters.site_of(centre.0, centre.1) {
+                info!("{}", waters.with(site, |l| timings(&l.terrain().landmass())));
             }
         }
     }
@@ -594,12 +594,12 @@ fn build(worlds: &Worlds, centre: (i32, i32), radius: i32, w: i64, surface: Surf
     Built { level: w, surface, generation, regions: built, heights, lines, seconds: started.elapsed().as_secs_f64() }
 }
 
-/// The seconds each level of the site's ladder has spent in each stage,
+/// The seconds each level of the site's water layer has spent in each stage,
 /// summed over every build since it was made, the cells each stage has
 /// filled, and a digest of every routed vertex's values: two builds that
 /// route alike digest alike.
-fn timings<G: world::ladder::Ground>(ladder: &world::ladder::Ladder<'_, G>) -> String {
-    use world::ladder::paged::{Atom, Paged, Progress, PAGE};
+fn timings<G: world::water::Ground>(landmass: &world::water::Landmass<'_, G>) -> String {
+    use world::water::paged::{Atom, Paged, Progress, PAGE};
     fn count<T: Atom>(of: &Paged<T>, set: impl Fn(T) -> bool) -> usize {
         of.written().flat_map(|first| first..first + PAGE).filter(|&c| set(of.get(c))).count()
     }
@@ -607,11 +607,11 @@ fn timings<G: world::ladder::Ground>(ladder: &world::ladder::Ladder<'_, G>) -> S
         of.written().flat_map(|first| first..first + PAGE).filter(|&c| of.done(c)).count()
     }
     let mut out = format!(
-        "ladder timings, s, cells read, routed, watered, and the routing's digest:\n{:>6}{}",
+        "water layer timings, s, cells read, routed, watered, and the routing's digest:\n{:>6}{}",
         "w",
         STAGES.iter().map(|s| format!("{s:>9}")).collect::<String>()
     );
-    for (lv, t) in ladder.levels.iter().zip(&ladder.timing()) {
+    for (lv, t) in landmass.levels.iter().zip(&landmass.timing()) {
         let cells = [count(&lv.erod, |v| !v.is_nan()), done(&lv.routed), done(&lv.watered)];
         let nn = lv.cap();
         let mut digest = 0xcbf2_9ce4_8422_2325u64;
@@ -635,11 +635,11 @@ fn timings<G: world::ladder::Ground>(ladder: &world::ladder::Ladder<'_, G>) -> S
 /// The level's lines within the view, each a segment from a vertex to its
 /// receiver at the line's floor, in the view's frame.
 fn lines(worlds: &Worlds, centre: (i32, i32), radius: i32, w: i64) -> Vec<[Vec3; 2]> {
-    let ladders = worlds.world.ladders().expect("the standard stack's ladders");
-    let Some(site) = ladders.site_of(centre.0, centre.1) else { return Vec::new() };
-    ladders.with(site, |l| {
-        let ladder = l.terrain().ladder();
-        let Some(lv) = ladder.levels.iter().find(|lv| lv.w == w) else { return Vec::new() };
+    let waters = worlds.world.waters().expect("the standard stack's water layers");
+    let Some(site) = waters.site_of(centre.0, centre.1) else { return Vec::new() };
+    waters.with(site, |l| {
+        let landmass = l.terrain().landmass();
+        let Some(lv) = landmass.levels.iter().find(|lv| lv.w == w) else { return Vec::new() };
         let (ci, cj) = cube_round(centre.0 as f64 / w as f64, centre.1 as f64 / w as f64);
         let h = radius as i64 / w + 1;
         let place = |v: usize, fl: f64| -> Vec3 {
@@ -703,11 +703,11 @@ fn inspect(
 fn read_tile(worlds: &Worlds, (q, r): (i32, i32)) -> String {
     let stack = worlds.stack.tile_at(q, r).elevation;
     let mut out = format!("tile ({q}, {r}); the stack alone {stack:.0}\n  w      cell        z    dry    cut  water  governing line: read at, vertex, floor, catchment, born at\n");
-    let Some(ladders) = worlds.world.ladders() else { return out };
-    let Some(site) = ladders.site_of(q, r) else { return out + "  open sea: no ladder holds it\n" };
-    ladders.with(site, |l| {
-        let ladder = l.terrain().ladder();
-        for lv in &ladder.levels {
+    let Some(waters) = worlds.world.waters() else { return out };
+    let Some(site) = waters.site_of(q, r) else { return out + "  open sea: no water layer holds it\n" };
+    waters.with(site, |l| {
+        let landmass = l.terrain().landmass();
+        for lv in &landmass.levels {
             let w = lv.w;
             let (i, j) = cube_round(q as f64 / w as f64, r as f64 / w as f64);
             let Some(c) = lv.idx(i, j).filter(|&c| lv.built.done(c)) else {
@@ -716,7 +716,7 @@ fn read_tile(worlds: &Worlds, (q, r): (i32, i32)) -> String {
             };
             let water = if lv.water.get(c).is_nan() { "-".to_string() } else { format!("{:.0}", lv.water.get(c)) };
             // The governing river is a vertex of the level it was read from.
-            let source = ladder.levels.iter().find(|s| s.w == lv.wsrc.get(c));
+            let source = landmass.levels.iter().find(|s| s.w == lv.wsrc.get(c));
             let line = match (lv.wgov.get(c), source) {
                 (g, Some(s)) if g >= 0 => {
                     let v = g as usize;

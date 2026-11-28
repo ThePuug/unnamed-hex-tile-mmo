@@ -1176,10 +1176,11 @@ impl WorldEvent for ThrustingEvent {
         let (wx, wy) = hex_to_world(q, r);
         let at = outlines.at(wx, wy)?;
         let stand = Some(at.stand());
+        let crust = Some(super::Crust { age: at.plate.age, continental: at.plate.continental });
         let rise = outlines.relief_of(&at);
-        if rise <= 0.0 { return Some(TileOutput { stand, ..TileOutput::default() }) }
+        if rise <= 0.0 { return Some(TileOutput { stand, crust, ..TileOutput::default() }) }
         let gradient = if below.slopes { gradient_of(wx, wy, rise, |x, y| outlines.relief(x, y)) } else { (0.0, 0.0) };
-        Some(TileOutput { elevation_delta: rise, gradient, stand, ..TileOutput::default() })
+        Some(TileOutput { elevation_delta: rise, gradient, stand, crust, ..TileOutput::default() })
     }
 }
 

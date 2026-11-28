@@ -696,7 +696,7 @@ pub fn region_tiles_loaded(key: MeshRegionKey, loaded_chunks: &HashSet<ChunkId>)
 /// Every far region the server streams a player whose tile's centre is
 /// `(wx, wz)`: each band's regions past the tiles, and from the tiles'
 /// band out the regions under them too, which the finer levels morph onto.
-/// A summary is the ladder's cell, which no client reads from its tiles.
+/// A summary is the water layer's cell, which no client reads from its tiles.
 /// `margin_rings` as [`visible_lod_regions`] takes it. The server sends by
 /// it and the client counts what is still to come by it.
 pub fn streamed_regions(wx: f32, wz: f32, margin_rings: u32) -> HashSet<MeshRegionKey> {

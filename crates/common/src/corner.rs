@@ -1,8 +1,8 @@
 //! The corner rule: where three cells meet, each cell's own value at the
 //! corner. Cells within a walkable span of each other meet; cells out of
-//! reach leave a face between them. The terrain ladder draws every level by
+//! reach leave a face between them. The water layer draws every level by
 //! it, and the tiles' ground, mesh and physics alike, where the world's
-//! heights are the ladder's.
+//! heights are the water layer's.
 
 /// Each sharing cell's value at one corner, by the half-walkable rule. Cells
 /// all within `w` of each other meet at the middle of their range; otherwise

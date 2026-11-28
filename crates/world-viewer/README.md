@@ -16,7 +16,7 @@ cargo run --bin world-viewer -- --help
 
 Defaults: centre (0, 0), radius 15000 world units, 8 world units per pixel,
 QOI to `world.qoi` (`--format png` writes `world.png`), view `elevation`.
-A picture reads the world at the ladder's level as wide as a pixel, the
+A picture reads the world at the water layer's level as wide as a pixel, the
 widest of 243, 81, 27, 9 and 3 tiles that a pixel holds, and at the tiles
 under three to a pixel: the same ground the game draws at that distance,
 and a wide picture costs its pixels and not every tile under them. The
@@ -35,7 +35,7 @@ Makes the summaries the server sends a player standing at a tile, the
 haven by default, as the server makes them: each band's regions round the
 tile, a region's cells made ready together and then read, the finest band
 first. It prints how long each band took and how many of its summaries
-hold water, for timing what the ladder's far levels cost.
+hold water, for timing what the water layer's far levels cost.
 
 ## Hubs
 
@@ -81,7 +81,7 @@ The view centres on the haven, which `HAVEN` moves for the viewer as for
 the server; `--centre` names another tile.
 
 A live window on the world's ground round a tile (the haven by default),
-`--radius` tiles either way, each ladder level drawn as its own hex cells by
+`--radius` tiles either way, each water layer level drawn as its own hex cells by
 the game's mesh builders: the corner rule, faces as walls, water as the
 game draws it. A level is built over the area the first time it is shown,
 and kept per level and surface until the parameters are reloaded.
@@ -89,16 +89,16 @@ and kept per level and surface until the parameters are reloaded.
 | Control | Does |
 |---------|------|
 | 1–5 | the level: tiles, 3, 9, 27, 81 |
-| Z | the surface: the ladder, the ladder dry, the stack alone |
+| Z | the surface: the water layer, the water layer dry, the stack alone |
 | X | water on or off |
 | C | faces highlighted red |
 | L | the level's lines overlaid, each at its floor |
 | left click | a tile read at every level: its cell, height, dry height, cut, the cut handed down, water, and the line governing its valley with its floor, catchment and the level it was born at |
 | right drag, middle drag, wheel | orbit, pan, zoom; WASD pan, Q and E turn |
-| R | the ladder's parameters read again from `--params` (`ladder.params`) and the world built anew |
+| R | the water layer's parameters read again from `--params` (`water.params`) and the world built anew |
 | P | a screenshot to `proofs/world-viewer/` |
 
-The ladder's top is built at launch and at every reload. `--shot` takes
+The water layer's top is built at launch and at every reload. `--shot` takes
 the first view and exits; with `--then-reload <file>` it reloads from that
 file first, for timing a reload.
 
@@ -126,7 +126,7 @@ The first tile in a fresh stack pays for every cell under it, so a viewport
 of a few pixels reads what one first tile costs.
 
 `--lod <r>` renders the viewport as the client draws a distance band
-instead of the views: summaries of radius `r` (the ladder is 1, 4, 13, 40;
+instead of the views: summaries of radius `r` (the water layer is 1, 4, 13, 40;
 0 is the tiles), each the height and water the seven-sample rule selects
 from tiles read through the whole stack, on the elevation ramp with water
 in blue by depth. It logs what the band cost — the first tile, then the

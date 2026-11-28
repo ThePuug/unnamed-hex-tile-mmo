@@ -62,7 +62,7 @@ fn main() {
         // Without a wait the runner spins a core. Physics is FixedUpdate, so
         // the wait only bounds how long a Try or Do sits before Update runs.
         // Half the cores build terrain for the far view and the chunks, each
-        // task on its own thread, where the ladder builds separate areas at
+        // task on its own thread, where the water layer builds separate areas at
         // once; the frame keeps a quarter.
         MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 60.0))).set(TaskPoolPlugin {
             task_pool_options: TaskPoolOptions {

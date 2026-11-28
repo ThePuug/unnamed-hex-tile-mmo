@@ -1,4 +1,4 @@
-//! The ladder's lattice: each level's cells on the world's axial tiles, `w`
+//! The water layer's lattice: each level's cells on the world's axial tiles, `w`
 //! tiles apart, nested aperture-nine in one orientation; a level's vertices,
 //! its cells' centres and corners.
 
@@ -119,7 +119,7 @@ pub fn cube_round(u: f64, v: f64) -> (i64, i64) {
     (rx as i64, rz as i64)
 }
 
-/// What one ring of ladder cells `w` tiles wide clears, in tiles: the gap
+/// What one ring of water layer cells `w` tiles wide clears, in tiles: the gap
 /// between a cell and the nearest cell two steps away, each a hexagon with
 /// corners at 60k° and circumradius w/√3 tiles.
 pub fn ring_clearance(w: i64) -> f64 {

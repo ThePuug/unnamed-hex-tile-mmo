@@ -1,6 +1,6 @@
-# The ladder's parameters for `world-viewer 3d`; R in the viewer reads this
+# The water layer's parameters for `world-viewer 3d`; R in the viewer reads this
 # file again and builds the world with it. A name left out keeps its default
-# (`world::ladder::Params`), which the server and every probe build with;
+# (`world::water::Params`), which the server and every probe build with;
 # the values here are those defaults.
 
 # Calibration: the catchment, in tiles, at which a channel begins to cut in

@@ -1,7 +1,7 @@
 //! `world-viewer summaries [q,r]`: the summaries the server sends a player
 //! standing at a tile, the haven by default, made as the server makes them,
 //! a region's cells made ready together and then read, the finest band
-//! first; each band timed, for timing what the ladder's far levels cost.
+//! first; each band timed, for timing what the water layer's far levels cost.
 
 use std::collections::BTreeMap;
 use std::time::Instant;

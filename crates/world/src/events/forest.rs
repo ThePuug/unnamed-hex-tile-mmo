@@ -40,153 +40,23 @@ use std::f64::consts::PI;
 
 use common::{Cover, HexLattice, HexSpatialGrid, Content, SITES};
 
-use crate::chains::Segment;
 use crate::lattice::{jittered_centre, CHAIN_SWING};
-use crate::noise::{hash_channel_f64, hash_f64};
-use crate::tectonic::{Edge, PLATE_SPACING};
+use crate::noise::hash_channel_f64;
 use crate::{hex_to_world, smoothstep, world_to_hex, RISE};
 use crate::hillslope::{erosion_rate, soil_share};
 use super::climate::{temperature, TREELINE, TREELINE_BAND};
 use super::index::{CellId, CellIndex, IndexRegistry, Located};
-use super::lithology::rock_on;
-use super::plates::{Coasts, PlateEdgeIndex, COAST_REACH, WARP_SWING};
-use super::thrusting::{outlines_of, rim_of, sheets_of, EdgeOutline, Outlines, OUTLINE_REACH, RANGE_RISE, RANGE_SPACING, WEDGE_SHEETS};
+use super::field::Field;
+use super::lithology::{Retention, ROCK_SPACING};
+use super::sky::{Moisture, SKY_SPACING};
+use super::plates::{COAST_REACH, WARP_SWING};
+use super::thrusting::{outlines_of, OUTLINE_REACH};
 use super::{footprint_plus_ring, CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
 
-const WIND_SEED: u64 = 0x7769_6e64;
 const STAND_SEED: u64 = 0x7374_616e;
 const SLOT_FILL: u64 = 0x66;
 const SLOT_KIND: u64 = 0x6b;
 const SLOT_MIX: u64 = 0x6d;
-
-// ── The sky ─────────────────────────────────────────────────────────────────
-
-/// The prevailing wind: one bearing for the whole world, a quantity of the
-/// seed, as a unit vector in world space pointing the way it blows.
-pub fn wind(seed: u64) -> (f64, f64) {
-    let a = 2.0 * PI * hash_f64(0, 0, seed ^ WIND_SEED);
-    (a.cos(), a.sin())
-}
-
-/// The share of the sea's moisture that reaches the interior: what is
-/// left where the sea's reach ends and holds from there.
-pub const INTERIOR_MOISTURE: f64 = 0.42;
-
-/// How far inland the sea's moisture falls to the interior's share: a
-/// quarter of a plate, short of the substrate's own ramp, so a continent
-/// two plates wide has an interior.
-pub const MOISTURE_REACH: f64 = 0.25 * PLATE_SPACING;
-
-/// What a full wedge wrings out of the air crossing it: the share of what
-/// arrives that its lee does without.
-pub const SHADOW_DEPTH: f64 = 0.6;
-
-/// How far upwind a belt is looked for: the reach of the shadow it casts.
-pub const SHADOW_REACH: f64 = PLATE_SPACING;
-
-/// The sea's moisture at a position: everything at the shore, falling
-/// over [`MOISTURE_REACH`] to the interior's share.
-pub fn sea_moisture(wx: f64, wy: f64, coasts: &Coasts) -> f64 {
-    let (frac, land) = coasts.shore(wx, wy);
-    if !land {
-        return 1.0;
-    }
-    1.0 - (1.0 - INTERIOR_MOISTURE) * smoothstep(frac * COAST_REACH / MOISTURE_REACH)
-}
-
-/// Where a ray from `(x, y)` along `(ux, uy)`, `reach` long, first
-/// crosses the edge's chain, as the distance along the ray: its bounding
-/// box first, then its segments. None where it does not.
-fn crossing(edge: &EdgeOutline, x: f64, y: f64, ux: f64, uy: f64, reach: f64) -> Option<f64> {
-    let [x0, y0, x1, y1] = edge.bounds;
-    let slab = |p: f64, d: f64, lo: f64, hi: f64| -> Option<(f64, f64)> {
-        if d.abs() < 1e-12 {
-            (p >= lo && p <= hi).then_some((0.0, reach))
-        } else {
-            let (a, b) = ((lo - p) / d, (hi - p) / d);
-            Some((a.min(b), a.max(b)))
-        }
-    };
-    let (tx0, tx1) = slab(x, ux, x0, x1)?;
-    let (ty0, ty1) = slab(y, uy, y0, y1)?;
-    if tx0.max(ty0).max(0.0) > tx1.min(ty1).min(reach) {
-        return None;
-    }
-    edge.segments
-        .iter()
-        .filter_map(|s| ray_hits(s, x, y, ux, uy, reach))
-        .min_by(|a, b| a.partial_cmp(b).unwrap())
-}
-
-/// Where a ray crosses one segment within `reach` of its start, as the
-/// distance along the ray.
-fn ray_hits(s: &Segment, x: f64, y: f64, ux: f64, uy: f64, reach: f64) -> Option<f64> {
-    let (ex, ey) = (s.x1 - s.x0, s.y1 - s.y0);
-    let den = ux * ey - uy * ex;
-    if den.abs() < 1e-12 {
-        return None;
-    }
-    let (px, py) = (s.x0 - x, s.y0 - y);
-    let t = (px * ey - py * ex) / den;
-    let u = (px * uy - py * ux) / den;
-    (t >= 0.0 && t <= reach && (0.0..=1.0).contains(&u)).then_some(t)
-}
-
-/// How much of a belt's shadow is left `t` downwind of it: the whole for
-/// half the reach, then fading to nothing at the reach, since the air
-/// takes up moisture again as it goes.
-fn fade(t: f64) -> f64 {
-    1.0 - smoothstep((t - 0.5 * SHADOW_REACH) / (0.5 * SHADOW_REACH))
-}
-
-/// The share of the air's moisture the belts between a position and the
-/// wind's source have wrung out, 0 to 1. The plate the position stands in
-/// reads its own wedges by where it stands in them: the windward flank has
-/// none up to the last sheet below the rim, and past the rim, or under air
-/// that came over it, the wedge's whole; every other plate's wedge shadows
-/// it where its front lies across the way upwind. A shadow eases in over
-/// one sheet's spacing either side of the rim, so nothing steps there, and
-/// is as deep as the share of the wedge that stands.
-pub fn shadow(wx: f64, wy: f64, wind: (f64, f64), outlines: &Outlines) -> f64 {
-    let Some(at) = outlines.at(wx, wy) else { return 0.0 };
-    let (ux, uy) = (-wind.0, -wind.1);
-    let mut passes = 1.0;
-    for (e, d) in at.plate.edges.iter().zip(&at.distances) {
-        if e.converge <= 0.0 {
-            continue;
-        }
-        let sheets = sheets_of(e.converge);
-        let rim = rim_of(sheets);
-        let share = if let Some(t) = crossing(e, at.x, at.y, ux, uy, SHADOW_REACH) {
-            smoothstep((d - (rim - RANGE_SPACING)) / RANGE_SPACING) * fade(t)
-        } else if *d < rim && e.distance(at.x + ux * rim, at.y + uy * rim).0 >= rim {
-            smoothstep((rim - d) / RANGE_SPACING)
-        } else {
-            0.0
-        };
-        passes *= 1.0 - SHADOW_DEPTH * share * e.standing * sheets / WEDGE_SHEETS;
-    }
-    for e in outlines.fronts_within(at.plate.id, at.x, at.y, SHADOW_REACH) {
-        if let Some(t) = crossing(e, at.x, at.y, ux, uy, SHADOW_REACH) {
-            passes *= 1.0 - SHADOW_DEPTH * fade(t) * e.standing * sheets_of(e.converge) / WEDGE_SHEETS;
-        }
-    }
-    1.0 - passes
-}
-
-/// How much more than the lowland before it a range's full height wrings
-/// out of the air climbing it: the windward flanks of mid-latitude ranges
-/// take two to four times their lowland's rain.
-pub const LIFT: f64 = 2.0;
-
-/// What the sky gives a position: the sea's moisture less the belts'
-/// shadow, and more as the ground lifts the air, by [`LIFT`] at a full
-/// range's rise; one is the shore's lowland, and a range's flanks take
-/// more.
-pub fn sky_moisture(wx: f64, wy: f64, wind: (f64, f64), coasts: &Coasts, outlines: &Outlines) -> f64 {
-    let lift = outlines.at(wx, wy).map_or(1.0, |at| 1.0 + LIFT * outlines.relief_of(&at) / RANGE_RISE);
-    sea_moisture(wx, wy, coasts) * (1.0 - shadow(wx, wy, wind, outlines)) * lift
-}
 
 // ── The kinds ───────────────────────────────────────────────────────────────
 
@@ -359,19 +229,6 @@ pub fn taper(u: f64) -> f64 {
     if u < TAPER_FROM { 1.0 } else { smoothstep((1.0 - u) / (1.0 - TAPER_FROM)) }
 }
 
-/// The coasts a cell's origins can read, from the edges plates published
-/// under the cell and its ring: the coast edges whose straight line lies
-/// within the shore ramp's reach of the cell, with the swing a chain and
-/// the warp take off it. The rest would be built and never read.
-fn coasts_of(scope: &CellScope) -> Coasts {
-    let (cq, cr) = scope.lattice().cell_center(scope.cell());
-    let (cx, cy) = hex_to_world(cq, cr);
-    let within = scope.lattice().radius as f64 + COAST_READ;
-    let edges = scope.read::<PlateEdgeIndex>();
-    let near = |e: &&Edge| e.is_coast() && Segment::along((e.x0, e.y0), (e.x1, e.y1), true).distance(cx, cy).0 <= within;
-    Coasts::new(edges.iter().flat_map(|idx| idx.features()).filter(near), scope.seed())
-}
-
 /// The stands originating in a cell, each with its climate read at its
 /// origin.
 fn stands_of(scope: &CellScope) -> Vec<Stand> {
@@ -379,9 +236,10 @@ fn stands_of(scope: &CellScope) -> Vec<Stand> {
     let lattice = scope.lattice();
     let cell = scope.cell();
     let stands = stand_lattice();
-    let wind = wind(seed);
-
-    let coasts = coasts_of(scope);
+    // What the sky gives and what the rock keeps of it, as the layers
+    // beneath published them; the range's relief off its outlines.
+    let sky = Field::of::<Moisture>(scope, SKY_SPACING);
+    let kept = Field::of::<Retention>(scope, ROCK_SPACING);
     let outline = outlines_of(scope);
 
     let mut out = Vec::new();
@@ -391,10 +249,9 @@ fn stands_of(scope: &CellScope) -> Vec<Stand> {
         if lattice.cell_id(oq, or) != cell {
             continue;
         }
-        let sky = sky_moisture(ox, oy, wind, &coasts, &outline);
         let relief = outline.at(ox, oy).map_or(0.0, |at| outline.crest_of(&at));
-        let retention = rock_on(ox, oy, seed, &coasts, &outline).rock.retention() * soil_share(erosion_rate(relief));
-        let moisture = sky * retention;
+        let retention = kept.at(ox, oy) * soil_share(erosion_rate(relief));
+        let moisture = sky.at(ox, oy) * retention;
         let density = density_of(moisture);
         if density <= 0.0 {
             continue;
@@ -628,6 +485,8 @@ mod tests {
     use super::*;
     use super::super::lithology::Rock;
     use super::super::plates::unwarp;
+    use super::super::sky::*;
+    use super::super::thrusting::{rim_of, sheets_of, Outlines};
     use crate::tectonic::PLATE_REACH;
 
     const S: u64 = 0x9E3779B97F4A7C15;
@@ -818,6 +677,7 @@ mod tests {
         c.add_event(Box::new(tilt::TiltEvent::new()));
         c.add_event(Box::new(motion::MotionEvent::new()));
         c.add_event(Box::new(thrusting::ThrustingEvent::new()));
+        c.add_event(Box::new(sky::SkyEvent::new()));
         c.add_event(Box::new(thickening::ThickeningEvent::new()));
         c.add_event(Box::new(lithology::LithologyEvent::new()));
         c.add_event(Box::new(scarp::ScarpEvent::new()));

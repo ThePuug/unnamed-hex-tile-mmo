@@ -213,7 +213,7 @@ player felled.
 
 **INV-009 — The world's stack is opaque.** Outside
 `crates/world/src/events`, the world is read through `Composite::tile_at` and
-its siblings (`tile_on`, a read standing on a coarser ladder level, `tiles_at`,
+its siblings (`tile_on`, a read standing on a coarser level of the water layer, `tiles_at`,
 `elevation_at`, `ground_at`, `water_at`, `tags_at`, `cover_at`, `cover_on`, `den_at`): a
 tile, composed. No caller learns which layers exist, reads a
 layer's index, or skips a layer it thinks it does not need. A layer's work
@@ -315,10 +315,17 @@ cargo. The server's environment and its output are the console's.
 wider reach needs a larger `scale`, which `max_influence` asserts at setup.
 Deform places its own features from the indexes below — there is no predicate
 or survey framework. Two independent cascades: deform (index→index,
-structural) and query (tile→tile, vertical). Deform never materializes tiles;
-query never triggers deform. Events evaluate in dependency order — event N
-reads the composite of 0..N-1. Each event owns a cell grid at its own scale,
-matched to feature size. Indexes are TypeId-keyed in a shared
+structural) and query (tile→tile, vertical). Deform makes no tiles of its
+own layer or above; a layer whose structure stands on heights, water above
+all, reads the ground beneath it a point at a time (`CellScope::below`),
+never a copy of the layers under it. Query never triggers deform. Events
+evaluate in dependency order — event N reads the composite of 0..N-1, and
+what a layer offers the layers above rides on the tile: the plate under
+it, the sky's moisture, the wet parts of a level's cell. A layer calls no
+other layer's code and keeps nothing the stack must reach through it for.
+Each event owns a cell grid at its own scale, matched to feature size: the
+water's is wide enough that a cell and its ring hold a site's land whole
+(`events::water::SITE_CELL`). Indexes are TypeId-keyed in a shared
 `IndexRegistry`, cell-partitioned for spatial scoping.
 
 **NNTree.** `common-bevy/plugins/nntree.rs` wraps `RTree<NearestNeighbor>` keyed
@@ -569,7 +576,7 @@ while it rides. Shallower it wades the bed, slowed; deeper it swims, at
 `SWIM_PACE`, uses no skill and gathers nothing. A body declaring none walks
 the bed at any depth. Water at zero is never built: the sea is the client's one plane, and a
 channel or lake surface at zero is under it. The sea is the ocean plates'
-ground below zero (`ladder::Level::sea`), and routing floods a continent's
+ground below zero (`water::Level::sea`), and routing floods a continent's
 ground below zero from there; a rule that takes the sea from height alone
 makes an outlet of every pit inland.
 

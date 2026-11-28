@@ -26,7 +26,7 @@ pub trait SummarySource {
 
     /// The summary at `(sq, sr)` on the lattice of radius `r`, where the
     /// source holds the summary's own cell rather than its tiles, as the
-    /// terrain ladder does at 3, 9, 27, 81 and 243 wide: its height, and which of
+    /// water layer does at 3, 9, 27, 81 and 243 wide: its height, and which of
     /// its parts stand under water above the sea, a bit to each, as
     /// [`wet_parts`] marks them. Where water stands over the cell its height
     /// is a step under the water's surface, as [`summarize`] stands a wet

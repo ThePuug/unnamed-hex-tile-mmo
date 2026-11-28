@@ -1,10 +1,10 @@
-//! The terrain ladder (`design/ladder.md`): the ground built on hex levels,
+//! The terrain water layer (`design/water-layer.md`): the ground built on hex levels,
 //! each three times finer than the one above, down to the tiles, a level
 //! answered on request one cell at a time.
 //!
 //! A request names a level and its cells. Each pass at a level deforms in
 //! cells of its own size, read with one ring: the pass declares how far its
-//! work reads, and its deform cell is the smallest ladder width whose ring
+//! work reads, and its deform cell is the smallest water layer width whose ring
 //! clears that ([`geom::ring_clearance`]). A deform reads its cell and ring
 //! at its level, the passes before it there, and the level above under the
 //! same footprint and one ring of the level above's cells. It writes its
@@ -43,7 +43,7 @@
 //! Every level below the top runs all three, down to the tiles. A level
 //! holds water where its own beds cross a cell: a level over the bed's
 //! floor, a level more for each two tiles of its half width past the first
-//! ([`water::depth`]). [`terrain::Terrain`] holds the ladder for readers on
+//! ([`cut::depth`]). [`terrain::Terrain`] holds the water layer for readers on
 //! many threads.
 //!
 //! **A river is handed down with its course, and each level bends it.**
@@ -94,9 +94,9 @@ pub mod paged;
 pub mod terrain;
 mod route;
 mod top;
-mod water;
+mod cut;
 
-pub use water::Course;
+pub use cut::Course;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -131,7 +131,7 @@ impl Default for Params {
     }
 }
 
-/// What the ladder reads of the ground at one tile.
+/// What the water layer reads of the ground at one tile.
 #[derive(Clone, Copy, Debug)]
 pub struct Point {
     /// The ground's height, in steps.
@@ -148,7 +148,7 @@ pub struct Point {
     pub ocean: bool,
 }
 
-/// What the ladder is seeded with: the ground at any tile.
+/// What the water layer is seeded with: the ground at any tile.
 pub trait Ground: Sync {
     fn at(&self, q: i64, r: i64) -> Point;
     /// The ground's height alone, where nothing else of the point is read.
@@ -240,7 +240,7 @@ pub fn reach(pass: Pass, w: i64) -> f64 {
         }
 }
 
-/// The smallest ladder width whose one ring clears what a pass reads at a
+/// The smallest water layer width whose one ring clears what a pass reads at a
 /// level `w` tiles wide, water reading as far as `ring` cells.
 pub fn cell_size(pass: Pass, w: i64, ring: f64) -> i64 {
     let reach = if pass == Pass::Water { ring * w as f64 } else { reach(pass, w) };
@@ -354,7 +354,7 @@ pub struct Level {
     pub wfall: Paged<f64>,
     /// The water a coarser level's channel puts over each cell's centre,
     /// where that level draws a river the level routes
-    /// ([`water::drawn_at`]): its surface, depth and river vertex, as an
+    /// ([`cut::drawn_at`]): its surface, depth and river vertex, as an
     /// index of that level; NaN and -1 where none. And which of the cell's
     /// children it covers.
     pub held: Paged<f64>,
@@ -687,7 +687,7 @@ impl Level {
 /// i and along j.
 pub type Bounds = (i64, (i64, i64), (i64, i64));
 
-/// The ladder: the top, built once, and the levels below on request.
+/// The water layer: the top, built once, and the levels below on request.
 ///
 /// Requests run on many threads at once. Each stage claims what it builds
 /// at a level, a cell or a deform cell at a time ([`Progress`]), once
@@ -695,7 +695,7 @@ pub type Bounds = (i64, (i64, i64), (i64, i64));
 /// has claimed waits for it. A thread never waits holding a claim, so
 /// every claim is finished. A value is a function of its position, so
 /// which thread builds it changes nothing.
-pub struct Ladder<'g, G: Ground> {
+pub struct Landmass<'g, G: Ground> {
     pub levels: Vec<Level>,
     ground: &'g G,
     pub p: Params,
@@ -708,7 +708,7 @@ pub struct Ladder<'g, G: Ground> {
     /// Each level's rivers as each level as fine or finer reads them, the
     /// level reading first: every edge sampled once, however many requests
     /// read it.
-    bands: Vec<Vec<RwLock<water::Band>>>,
+    bands: Vec<Vec<RwLock<cut::Band>>>,
     /// The cells of the coarser level whose ring each band of a coarser
     /// level's rivers holds, by the same levels: a request reads only what
     /// the cells it adds reach.
@@ -717,31 +717,31 @@ pub struct Ladder<'g, G: Ground> {
     /// one has.
     settle: (Mutex<()>, Condvar),
     finishes: AtomicU64,
-    /// Whether a thread building the ladder panicked, its claims never to
+    /// Whether a thread building the water layer panicked, its claims never to
     /// be finished.
     broken: AtomicBool,
 }
 
-impl<'g, G: Ground> Ladder<'g, G> {
-    /// A ladder over `extents`, each level's width and its cells' index range
+impl<'g, G: Ground> Landmass<'g, G> {
+    /// A water layer over `extents`, each level's width and its cells' index range
     /// `lo..hi` on both axes, coarsest first; the top built over all of its.
     pub fn new(ground: &'g G, extents: &[(i64, i64, i64)], p: Params) -> Self {
         let boxes: Vec<Bounds> = extents.iter().map(|&(w, lo, hi)| (w, (lo, lo), (hi, hi))).collect();
-        Ladder::new_box(ground, &boxes, p)
+        Landmass::new_box(ground, &boxes, p)
     }
 
-    /// A ladder over `bounds`, each level's width and its cells' index range
+    /// A water layer over `bounds`, each level's width and its cells' index range
     /// along i and along j, coarsest first; the top built over all of its.
     pub fn new_box(ground: &'g G, bounds: &[Bounds], p: Params) -> Self {
-        Ladder::with_top(ground, bounds, p, None)
+        Landmass::with_top(ground, bounds, p, None)
     }
 
     /// The top over `bounds` of `ground`, built.
     pub fn top(ground: &'g G, bounds: Bounds, p: Params) -> Level {
-        Ladder::new_box(ground, &[bounds], p).levels.remove(0)
+        Landmass::new_box(ground, &[bounds], p).levels.remove(0)
     }
 
-    /// A ladder over `bounds` whose top is `top`, built over `bounds[0]`
+    /// A water layer over `bounds` whose top is `top`, built over `bounds[0]`
     /// with the same ground and parameters, or built here without one.
     pub fn with_top(ground: &'g G, bounds: &[Bounds], p: Params, top: Option<Level>) -> Self {
         let mut levels: Vec<Level> = Vec::new();
@@ -763,10 +763,10 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let count = levels.len();
         let bands = levels
             .iter()
-            .map(|read| levels.iter().take_while(|up| up.w >= read.w).map(|up| RwLock::new(water::Band::empty(up.w, -1.0, p.ring * up.w as f64, read.w))).collect())
+            .map(|read| levels.iter().take_while(|up| up.w >= read.w).map(|up| RwLock::new(cut::Band::empty(up.w, -1.0, p.ring * up.w as f64, read.w))).collect())
             .collect();
         let covered = (0..count).map(|k| levels[..k].iter().map(|up| Progress::new(up.cap())).collect()).collect();
-        let mut ladder = Ladder {
+        let mut landmass = Landmass {
             levels,
             ground,
             p,
@@ -780,13 +780,13 @@ impl<'g, G: Ground> Ladder<'g, G> {
         };
         match top {
             Some(top) => {
-                let lv = &ladder.levels[0];
-                assert_eq!((top.w, top.lo, top.n, top.lo_j, top.n_j), (lv.w, lv.lo, lv.n, lv.lo_j, lv.n_j), "a top over the ladder's top bounds");
-                ladder.levels[0] = top;
+                let lv = &landmass.levels[0];
+                assert_eq!((top.w, top.lo, top.n, top.lo_j, top.n_j), (lv.w, lv.lo, lv.n, lv.lo_j, lv.n_j), "a top over the water layer's top bounds");
+                landmass.levels[0] = top;
             }
-            None => ladder.build_top(),
+            None => landmass.build_top(),
         }
-        ladder
+        landmass
     }
 
     /// Per level: troughs whose upstream reached the read edge, vertices
@@ -806,7 +806,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
     }
 
     /// Watches the claims a thread is about to make: should it panic before
-    /// finishing them, every thread waiting on the ladder panics too.
+    /// finishing them, every thread waiting on the water layer panics too.
     fn claiming(&self) -> Claiming<'_> {
         Claiming { broken: &self.broken, settle: &self.settle }
     }
@@ -814,7 +814,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
     /// Wakes the threads waiting on what this one finished.
     fn settled(&self) {
         self.finishes.fetch_add(1, Ordering::Release);
-        let _held = self.settle.0.lock().expect("the ladder's waiting room");
+        let _held = self.settle.0.lock().expect("the water layer's waiting room");
         self.settle.1.notify_all();
     }
 
@@ -827,10 +827,10 @@ impl<'g, G: Ground> Ladder<'g, G> {
             if ready() {
                 return;
             }
-            assert!(!self.broken.load(Ordering::Acquire), "a thread building the ladder panicked");
-            let held = self.settle.0.lock().expect("the ladder's waiting room");
+            assert!(!self.broken.load(Ordering::Acquire), "a thread building the water layer panicked");
+            let held = self.settle.0.lock().expect("the water layer's waiting room");
             if self.finishes.load(Ordering::Acquire) == seen {
-                drop(self.settle.1.wait_timeout(held, Duration::from_millis(50)).expect("the ladder's waiting room"));
+                drop(self.settle.1.wait_timeout(held, Duration::from_millis(50)).expect("the water layer's waiting room"));
             }
         }
     }
@@ -919,8 +919,8 @@ impl<'g, G: Ground> Ladder<'g, G> {
         lv.routed.fill_done();
         // The top's own valleys, cut along its troughs into the ground it
         // routed over.
-        let edges = water::trough_edges(lv, &all, &p);
-        water::top_cut(lv, &edges, &p);
+        let edges = cut::trough_edges(lv, &all, &p);
+        cut::top_cut(lv, &edges, &p);
         for &v in &vertices {
             lv.z.set(v, (lv.ground.get(v) + lv.cut.get(v) + 0.5).floor());
         }
@@ -954,7 +954,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let asked: HashMap<usize, usize> =
             cells.iter().enumerate().filter_map(|(x, &(i, j))| lv.idx(i, j).filter(|&c| lv.exists[c]).map(|c| (c, x))).collect();
         let mut out = vec![Vec::new(); cells.len()];
-        for (c, course) in water::courses(lv, &Mask::new(asked.keys().copied()), &self.p) {
+        for (c, course) in cut::courses(lv, &Mask::new(asked.keys().copied()), &self.p) {
             out[asked[&c]].push(course);
         }
         out
@@ -1091,8 +1091,8 @@ impl<'g, G: Ground> Ladder<'g, G> {
         if !todo.is_empty() {
             let started = Instant::now();
             let par = &self.levels[k - 1];
-            let bands: Vec<&RwLock<water::Band>> = self.bands[k][..k].iter().collect();
-            let carved = water::carved_over(lv, &bands, &todo);
+            let bands: Vec<&RwLock<cut::Band>> = self.bands[k][..k].iter().collect();
+            let carved = cut::carved_over(lv, &bands, &todo);
             for (&c, found) in todo.iter().zip(carved) {
                 for (t, v) in lv.own_vertices(c) {
                     lv.carved.set(v, found.carved[t as usize]);
@@ -1125,7 +1125,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
     }
 
     /// Every coarser level's rivers within reach of a mask of level k in
-    /// its band as level k reads it ([`Ladder::bands`]): its troughs over
+    /// its band as level k reads it ([`Landmass::bands`]): its troughs over
     /// its ring of cells past each of its cells over the mask the band
     /// does not cover yet, read out to its ring.
     fn rivers_above(&self, k: usize, mask: &Mask) {
@@ -1151,7 +1151,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             let claims = self.claiming();
             let mine = Mask::new(under.iter().filter(|&u| covered.claim(u) == Claim::Mine));
             if !mine.is_empty() {
-                let edges = water::trough_edges(up, &up.dilate(&mine, rings), &self.p);
+                let edges = cut::trough_edges(up, &up.dilate(&mine, rings), &self.p);
                 self.bands[k][j].write().expect("a band of rivers").add(&edges, &self.p);
                 for u in mine.iter() {
                     covered.finish(u);
@@ -1181,10 +1181,10 @@ impl<'g, G: Ground> Ladder<'g, G> {
             let mine = lv.claim_blocks(Pass::Water, &lv.watered, &pend);
             if !mine.is_empty() {
                 let started = Instant::now();
-                let edges = water::trough_edges(lv, &lv.footprint(Pass::Water, &mine), &self.p);
+                let edges = cut::trough_edges(lv, &lv.footprint(Pass::Water, &mine), &self.p);
                 let band = &self.bands[k][k];
                 band.write().expect("a band of rivers").add(&edges, &self.p);
-                water::level_cut(lv, band, &mine, &self.p);
+                cut::level_cut(lv, band, &mine, &self.p);
                 lv.spent(Pass::Water as usize, mine.len() as u64);
                 self.timed(k, Stage::Water, started);
                 self.settled();
@@ -1228,14 +1228,14 @@ impl<'g, G: Ground> Ladder<'g, G> {
     pub fn unlimited_cut(&self, k: usize, cells: &[(i64, i64)]) -> Vec<f64> {
         let lv = &self.levels[k];
         let routed = Mask::new(lv.routed.written().flat_map(|first| first..first + PAGE).filter(|&c| lv.routed.done(c)));
-        let edges = water::trough_edges(lv, &routed, &self.p);
+        let edges = cut::trough_edges(lv, &routed, &self.p);
         let at: Vec<usize> = cells.iter().map(|&(i, j)| lv.idx(i, j).expect("a cell the level holds")).collect();
-        water::whole_cut(lv, &edges, &at, &self.p)
+        cut::whole_cut(lv, &edges, &at, &self.p)
     }
 }
 
 /// A thread's claims in the making: dropped as the thread panics, it marks
-/// the ladder broken and wakes every thread waiting on it, which would
+/// the water layer broken and wakes every thread waiting on it, which would
 /// otherwise wait on those claims for ever.
 struct Claiming<'a> {
     broken: &'a AtomicBool,

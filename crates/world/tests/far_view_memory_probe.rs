@@ -233,7 +233,7 @@ fn costly_patch() {
     step("parts warmed", &|| c.warm_level(part, &parts));
     let wet = c.level(part, &parts).iter().filter(|p| p.is_some_and(|p| p.2.is_some())).count();
     let none = c.level(part, &parts).iter().filter(|p| p.is_none()).count();
-    println!("{} parts: {wet} under water, {none} no ladder's", parts.len());
+    println!("{} parts: {wet} under water, {none} no water layer's", parts.len());
     let own: Vec<(i64, i64)> = block.iter().map(|&(q, t)| (q as i64, t as i64)).collect();
     let orphan: Vec<(i32, i32)> = block.iter().zip(c.level(scale(r) as i64, &own)).filter(|(_, v)| v.is_none()).map(|(b, _)| *b).collect();
     let with_land = orphan.iter().filter(|&&(sq, sr)| {
@@ -241,16 +241,16 @@ fn costly_patch() {
         let at: Vec<(i64, i64)> = part_offsets(r).iter().map(|&(dq, dr)| ((cq + dq) as i64 / part, (cr + dr) as i64 / part)).collect();
         c.level(part, &at).iter().any(|p| p.is_some())
     }).count();
-    println!("{} summaries: {} whose own cell no ladder holds, {with_land} of those with a part a ladder holds", block.len(), orphan.len());
+    println!("{} summaries: {} whose own cell no water layer holds, {with_land} of those with a part a water layer holds", block.len(), orphan.len());
     if ring {
         let around: Vec<(i64, i64)> = parts.iter().flat_map(|&(i, j)| [(1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1)].map(|(di, dj)| (i + di, j + dj))).collect();
         step("rings warmed in one request", &|| c.warm_level(part, &around));
     }
-    let ladders = c.ladders().expect("the standard stack has ladders");
-    let mut sites: Vec<(i32, i32)> = parts.iter().filter_map(|&(i, j)| ladders.site_of((i * part) as i32, (j * part) as i32)).collect();
+    let waters = c.waters().expect("the standard stack has water layers");
+    let mut sites: Vec<(i32, i32)> = parts.iter().filter_map(|&(i, j)| waters.site_of((i * part) as i32, (j * part) as i32)).collect();
     sites.sort_unstable();
     sites.dedup();
-    let spent = |site| ladders.with(site, |l| (l.terrain().ladder().timing(), l.terrain().ladder().levels.iter().map(|lv| (lv.w, lv.cost())).collect::<Vec<_>>()));
+    let spent = |site| waters.with(site, |l| (l.terrain().landmass().timing(), l.terrain().landmass().levels.iter().map(|lv| (lv.w, lv.cost())).collect::<Vec<_>>()));
     let before: Vec<_> = sites.iter().map(|&s| spent(s)).collect();
     step("summarized", &|| {
         for &(sq, sr) in &block {
@@ -259,10 +259,10 @@ fn costly_patch() {
     });
     for (&site, (t0, c0)) in sites.iter().zip(before) {
         let (t1, c1) = spent(site);
-        let held = parts.iter().filter(|&&(i, j)| ladders.site_of((i * part) as i32, (j * part) as i32) == Some(site)).count();
+        let held = parts.iter().filter(|&&(i, j)| waters.site_of((i * part) as i32, (j * part) as i32) == Some(site)).count();
         println!("site {site:?}: {held} parts");
         for (k, ((a, b), ((w, ca), (_, cb)))) in t0.iter().zip(&t1).zip(c0.iter().zip(&c1)).enumerate() {
-            let dt: Vec<String> = world::ladder::STAGES.iter().zip(a.iter().zip(b)).filter(|(_, (a, b))| *b - *a > 0.01).map(|(n, (a, b))| format!("{n} {:.2}s", b - a)).collect();
+            let dt: Vec<String> = world::water::STAGES.iter().zip(a.iter().zip(b)).filter(|(_, (a, b))| *b - *a > 0.01).map(|(n, (a, b))| format!("{n} {:.2}s", b - a)).collect();
             let dc: Vec<u64> = ca.iter().zip(cb).map(|(a, b)| b - a).collect();
             if !dt.is_empty() || dc.iter().any(|&n| n > 0) {
                 println!("  level {k} (w={w}): {} | deforms and cells {dc:?}", dt.join(", "));

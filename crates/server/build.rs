@@ -1,7 +1,7 @@
 //! The server runs on Windows' segment heap (`segment-heap.manifest`),
 //! embedded in its executable so every allocation in the process takes it,
 //! the engine's and std's libraries linked as DLLs as much as its own. The
-//! ladder builds separate areas of terrain on many threads at once, each
+//! water layer builds separate areas of terrain on many threads at once, each
 //! allocating large blocks as it goes, and the default heap takes one lock
 //! for every block that size: on it those threads wait in turn.
 

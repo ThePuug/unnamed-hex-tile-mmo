@@ -2,7 +2,9 @@
 //!
 //! Two independent cascades:
 //! - **Deform cascade** (index → index): structural work. Deform reads the
-//!   indexes below and populates its own. Cheap — no tile materialization.
+//!   indexes below and populates its own. It makes no tiles of its own
+//!   layer or above; a layer whose structure stands on heights reads the
+//!   ground beneath it at the points it needs ([`CellScope::below`]).
 //! - **Query cascade** (tile → tile): single (q, r) resolves vertically through the
 //!   stack. Each layer's `query()` computes one tile on demand. The framework
 //!   remembers the tiles read lately, never every tile read.
@@ -88,10 +90,12 @@
 
 pub mod climate;
 pub mod den;
+pub mod field;
 pub mod forest;
 pub mod index;
-pub mod ladder_ground;
+pub mod water;
 pub mod scarp;
+pub mod sky;
 pub mod lithology;
 pub mod motion;
 pub mod outcrop;
@@ -147,9 +151,25 @@ pub struct TileOutput {
     pub cover: Cover,
     /// The habitat of a den whose site is this tile, where a layer says so
     pub den: Option<Habitat>,
+    /// Which of the nine parts of the cell the read stands on lie under
+    /// water above the sea, a bit to each, where a layer holds that cell.
+    pub wet: Option<u16>,
+    /// The plate the tile stands on, where a layer found it.
+    pub crust: Option<Crust>,
+    /// What the sky gives the tile ([`sky::sky_moisture`]), where a layer
+    /// says.
+    pub moisture: Option<f64>,
     /// Where the tile stands among the plates, where a layer found it. A
     /// later layer's replaces an earlier one's.
     pub(crate) stand: Option<thrusting::Stand>,
+}
+
+/// The plate a tile stands on: its age, none to one, and whether it is a
+/// continent's or the ocean's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Crust {
+    pub age: f64,
+    pub continental: bool,
 }
 
 /// Read-only composite view at a single tile.
@@ -157,7 +177,7 @@ pub struct TileOutput {
 pub struct TileView {
     pub q: i32,
     pub r: i32,
-    /// The width of the ladder level the read stands on, the level whose
+    /// The width of the water layer level the read stands on, the level whose
     /// cell is centred on the tile: 1 for the tile's own ground.
     pub w: i64,
     pub wx: f64,
@@ -170,8 +190,8 @@ pub struct TileView {
     /// over the layers beneath.
     pub gradient: (f64, f64),
     /// Whether a layer's slope reaches any reader: not in a stack whose
-    /// ground the ladder draws, its slope standing in for theirs, nor in
-    /// the ground the ladder reads, heights alone. A layer whose slope
+    /// ground the water layer draws, its slope standing in for theirs, nor in
+    /// the ground the water layer reads, heights alone. A layer whose slope
     /// would reach no one reports none.
     pub slopes: bool,
     /// The highest water surface any layer below put over this tile.
@@ -185,6 +205,14 @@ pub struct TileView {
     pub cover: Cover,
     /// The habitat of a den whose site is this tile, as [`TileOutput::den`].
     pub den: Option<Habitat>,
+    /// Which parts of the cell the read stands on lie under water, as
+    /// [`TileOutput::wet`]; None where no layer holds that cell.
+    pub wet: Option<u16>,
+    /// The plate the tile stands on, as [`TileOutput::crust`]; None past
+    /// every plate's outline, which is open ocean.
+    pub crust: Option<Crust>,
+    /// What the sky gives the tile, as [`TileOutput::moisture`].
+    pub moisture: Option<f64>,
     /// Where the tile stands among the plates, as [`TileOutput::stand`]:
     /// for the layers above the one that found it, so a plate is looked up
     /// once a tile.
@@ -194,7 +222,7 @@ pub struct TileView {
 impl TileView {
     fn on(w: i64, q: i32, r: i32) -> Self {
         let (wx, wy) = hex_to_world(q, r);
-        TileView { q, r, w, wx, wy, elevation: 0.0, fine: None, gradient: (0.0, 0.0), slopes: true, water: None, fall: 0.0, rock: None, cover: Cover::NONE, den: None, stand: None }
+        TileView { q, r, w, wx, wy, elevation: 0.0, fine: None, gradient: (0.0, 0.0), slopes: true, water: None, fall: 0.0, rock: None, cover: Cover::NONE, den: None, wet: None, crust: None, moisture: None, stand: None }
     }
 
     fn compose(&mut self, out: &TileOutput) {
@@ -216,6 +244,15 @@ impl TileView {
         }
         if out.den.is_some() {
             self.den = out.den;
+        }
+        if out.wet.is_some() {
+            self.wet = out.wet;
+        }
+        if out.crust.is_some() {
+            self.crust = out.crust;
+        }
+        if out.moisture.is_some() {
+            self.moisture = out.moisture;
         }
         if out.stand.is_some() {
             self.stand.clone_from(&out.stand);
@@ -265,11 +302,37 @@ pub struct CellScope<'a> {
     cell: CellId,
     layer: usize,
     lattice: &'a HexLattice,
-    composite: &'a Composite,
+    composite: &'a Arc<Core>,
     seed: u64,
 }
 
+/// The ground beneath a layer: every layer under it composed at a tile,
+/// and nothing of its own or above. What a layer whose structure stands on
+/// heights reads them through, water above all, which cannot be routed
+/// without the ground it runs on. It is the one stack's ground, the cells
+/// it builds the same every reader shares, and a layer may keep it past
+/// its structural pass to read the points it comes to need: a point's
+/// ground is the same whenever it is read.
+#[derive(Clone)]
+pub struct Below {
+    core: std::sync::Weak<Core>,
+    layers: usize,
+}
+
+impl Below {
+    /// The tile at (q, r) as the layers beneath compose it.
+    pub fn tile(&self, q: i32, r: i32) -> TileView {
+        let core = self.core.upgrade().expect("a stack outlives what its layers publish");
+        core.compose(self.layers, 1, q, r, |_, _| {})
+    }
+}
+
 impl<'a> CellScope<'a> {
+    /// The ground beneath this layer ([`Below`]).
+    pub fn below(&self) -> Below {
+        Below { core: Arc::downgrade(self.composite), layers: self.layer }
+    }
+
     pub fn cell(&self) -> CellId { self.cell }
     pub fn seed(&self) -> u64 { self.seed }
 
@@ -478,8 +541,10 @@ pub trait WorldEvent: Send + Sync {
     fn register_indexes(&self, _registry: &mut IndexRegistry) {}
 
     /// Structural work: read the indexes below through [`CellScope`], place
-    /// this layer's features, publish them. No tile materialization — indexes
-    /// only, and there is no route from here to the tile cascade.
+    /// this layer's features, publish them. The only tiles it may read are
+    /// the ground beneath this layer, a point at a time
+    /// ([`CellScope::below`]): never its own layer's or one above, which
+    /// would read what is not settled.
 
     /// Runs before this cell's neighbours are guaranteed to exist, so anything
     /// needing to see them belongs in [`WorldEvent::prepare`], not here.
@@ -500,6 +565,12 @@ pub trait WorldEvent: Send + Sync {
     fn prepare(&self, _scope: &CellScope) -> Box<dyn Any + Send + Sync> {
         Box::new(())
     }
+
+    /// Tiles of one of this layer's cells about to be read together on the
+    /// level `w` wide, `cell` what [`WorldEvent::prepare`] built for it: for
+    /// a layer that builds ground by the area, to build theirs as one.
+    /// Reading them without it gives the same tiles.
+    fn warm(&self, _w: i64, _tiles: &[(i32, i32)], _cell: &(dyn Any + Send + Sync)) {}
 
     /// Resolve a single tile. Returns None if this event contributes nothing
     /// at this position.
@@ -788,127 +859,141 @@ pub const RECENT_TILES: usize = 65_536;
 /// No global Mutex. Cell caches use DashMap + per-cell deform locks.
 /// IndexRegistry uses interior RwLock. All methods take `&self`.
 pub struct Composite {
-    events: Vec<Box<dyn WorldEvent>>,
-    lattices: Vec<HexLattice>,
-    cell_caches: Vec<CellCache>,
-    indexes: IndexRegistry,
+    core: Arc<Core>,
     /// The tiles read lately, composed, at most [`RECENT_TILES`] of them.
     tiles: DashMap<(i64, i32, i32), TileView>,
     /// Tile hits and misses: a tile found cached against one queried.
     metrics: HitCounters,
+}
+
+/// The layers and what they have built: what composes a tile, shared with
+/// every [`Below`] a layer keeps.
+pub struct Core {
+    events: Vec<Box<dyn WorldEvent>>,
+    lattices: Vec<HexLattice>,
+    cell_caches: Vec<CellCache>,
+    indexes: IndexRegistry,
     seed: u64,
-    /// The terrain ladder the stack's ground is composed by: a tile's height
-    /// and water are its, its cover and den the layers', and a summary is
-    /// the ladder's cell. None in a stack of other layers.
-    ladders: Option<std::sync::Arc<ladder_ground::Ladders>>,
     /// Whether its layers' slopes reach any reader ([`TileView::slopes`]).
     slopes: bool,
+}
+
+impl std::ops::Deref for Composite {
+    type Target = Arc<Core>;
+    fn deref(&self) -> &Arc<Core> {
+        &self.core
+    }
 }
 
 impl Composite {
     pub fn new(seed: u64) -> Self {
         Self {
-            events: Vec::new(),
-            lattices: Vec::new(),
-            cell_caches: Vec::new(),
-            indexes: IndexRegistry::new(),
+            core: Arc::new(Core { events: Vec::new(), lattices: Vec::new(), cell_caches: Vec::new(), indexes: IndexRegistry::new(), seed, slopes: true }),
             tiles: DashMap::new(),
             metrics: HitCounters::new(),
-            seed,
-            ladders: None,
-            slopes: true,
         }
     }
 
-    /// The ladder each continent's ground is composed by, for the world
-    /// viewer and the probes, never the game (INV-009).
-    #[cfg(feature = "inspect")]
-    pub fn ladders(&self) -> Option<&ladder_ground::Ladders> {
-        self.ladders.as_deref()
+    /// The layers, to add one: before the stack is first read, when no
+    /// layer has yet been handed the ground beneath it.
+    fn core_mut(&mut self) -> &mut Core {
+        Arc::get_mut(&mut self.core).expect("layers are added before the stack is read")
     }
 
-    /// The stack's layers alone, its ground theirs, not the ladder's: for
-    /// the world viewer to set beside the world, never the game.
+    /// The ground every layer of this stack composes, as a layer above
+    /// them all would read it: for a probe that builds on a stack of its
+    /// own.
+    pub fn ground(&self) -> Below {
+        Below { core: Arc::downgrade(&self.core), layers: self.events.len() }
+    }
+
+    /// The stack's layers alone, their ground not cut by water: for the
+    /// world viewer to set beside the world, never the game.
     #[cfg(feature = "inspect")]
     pub fn stack_alone(seed: u64) -> Self {
         Self::layered(seed, None)
     }
 
-    /// The tiles of `coords` made ready together, where reading them one by
-    /// one would repeat work: the ladder's, for a chunk.
+    /// Tiles about to be read together on the level `w` wide, each a
+    /// centre of that level: every layer is told its own cells' share
+    /// ([`WorldEvent::warm`]), so one that builds ground by the area
+    /// builds theirs as one, where reading them one by one would build it
+    /// a block or two at a time.
+    pub fn warm_on(&self, w: i64, tiles: &[(i32, i32)]) {
+        for layer in 0..self.events.len() {
+            let mut by: HashMap<CellId, Vec<(i32, i32)>> = HashMap::new();
+            for &(q, r) in tiles {
+                by.entry(self.lattices[layer].cell_id(q, r)).or_default().push((q, r));
+            }
+            for (cell, tiles) in by {
+                self.ensure_query_neighbourhood(layer, cell);
+                let ctx = self.cell_context(layer, cell);
+                self.events[layer].warm(w, &tiles, &*ctx);
+            }
+        }
+    }
+
+    /// The tiles of `coords` made ready together, as a chunk reads them.
     pub fn warm(&self, coords: &[(i32, i32)]) {
-        if let Some(ladders) = &self.ladders {
-            ladders.warm(coords);
-        }
+        self.warm_on(1, coords);
     }
 
-    /// The cells of a summary level `w` tiles wide, centred on tiles
-    /// `(i, j)·w`: the terrain ladder's, where it holds them, each one's
-    /// height, its water's surface where the level holds water, and which
-    /// of its nine parts stand under water above the sea, a bit to each.
-    pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, f64, Option<f64>, u16)>> {
-        match &self.ladders {
-            Some(ladders) => ladders.level(w, cells),
-            None => vec![None; cells.len()],
-        }
-    }
-
-    /// The rivers of a summary level `w` tiles wide leaving each of
-    /// `cells`, by its centre and its own two corners: each a curve through
-    /// positions in tiles and its bed's half width along it
-    /// ([`crate::ladder::Course`]), what a summary draws its rivers along
-    /// at their own widths. A river crossing a cell leaves a cell beside it
-    /// too, so a cell's rivers are its own and its neighbours'. A river too
-    /// wide for the level to draw (`Course::drawn` wider than `w`) runs
-    /// along the course of the level that draws it, read at that level;
-    /// the level's own course of it is not where its water lies. None
-    /// where no ladder holds the cell.
-    pub fn courses(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Vec<crate::ladder::Course>> {
-        match &self.ladders {
-            Some(ladders) => ladders.courses(w, cells),
-            None => vec![Vec::new(); cells.len()],
-        }
-    }
-
-    /// The cells of the level `w` tiles wide at `cells` made ready together:
-    /// the summaries `w` wide, as
+    /// The cells of the level `w` tiles wide at `cells`, each centred on
+    /// tile `(i, j)·w`, made ready together: the summaries `w` wide, as
     /// [`SummarySource::cell`](common::summary::SummarySource::cell) reads
     /// them, or the ground under the parts of summaries three times as
     /// wide, as [`Composite::tile_on`] stands them on it.
     pub fn warm_level(&self, w: i64, cells: &[(i64, i64)]) {
-        self.level(w, cells);
+        let tiles: Vec<(i32, i32)> = cells.iter().map(|&(i, j)| ((i * w) as i32, (j * w) as i32)).collect();
+        self.warm_on(w, &tiles);
+    }
+
+    /// The cells of a summary level `w` tiles wide, centred on tiles
+    /// `(i, j)·w`, as the stack composes each: its height, the height its
+    /// surface runs through, its water's surface where it holds water,
+    /// and which of its nine parts stand under water above the sea, a bit
+    /// to each. None where no layer holds the level's cell there
+    /// ([`TileView::wet`]).
+    pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, f64, Option<f64>, u16)>> {
+        cells
+            .iter()
+            .map(|&(i, j)| {
+                let view = self.tile_on(w, (i * w) as i32, (j * w) as i32);
+                view.wet.map(|wet| (view.elevation, view.fine.unwrap_or(0.0), view.water, wet))
+            })
+            .collect()
     }
 
     /// The world's stack. The server, the viewer and every probe of the
     /// whole world build it here, so what any of them reads is what the
     /// world generates.
     pub fn standard(seed: u64) -> Self {
-        Self::standard_with(seed, crate::ladder::Params::default())
+        Self::standard_with(seed, crate::water::Params::default())
     }
 
-    /// The world's stack, its ladder cutting by `p`: for the world viewer's
+    /// The world's stack, its water layer cutting by `p`: for the world viewer's
     /// parameters, read from a file.
-    pub fn standard_with(seed: u64, p: crate::ladder::Params) -> Self {
-        Self::layered(seed, Some(std::sync::Arc::new(ladder_ground::Ladders::new(seed, p))))
+    pub fn standard_with(seed: u64, p: crate::water::Params) -> Self {
+        Self::layered(seed, Some(p))
     }
 
-    /// The world's layers, the ground composed by `ladders` where there is
-    /// one: it stands after every layer that shapes the ground and before
-    /// those that stand on it.
-    fn layered(seed: u64, ladders: Option<std::sync::Arc<ladder_ground::Ladders>>) -> Self {
+    /// The world's layers, water cutting the ground by `water` where it is
+    /// given: it stands after every layer that shapes the ground and
+    /// before those that stand on it.
+    fn layered(seed: u64, water: Option<crate::water::Params>) -> Self {
         let mut composite = Self::new(seed);
         composite.add_event(Box::new(plates::PlateEvent::new()));
         composite.add_event(Box::new(tilt::TiltEvent::new()));
         composite.add_event(Box::new(motion::MotionEvent::new()));
         composite.add_event(Box::new(thrusting::ThrustingEvent::new()));
+        composite.add_event(Box::new(sky::SkyEvent::new()));
         composite.add_event(Box::new(thickening::ThickeningEvent::new()));
         composite.add_event(Box::new(lithology::LithologyEvent::new()));
         composite.add_event(Box::new(scarp::ScarpEvent::new()));
-        if let Some(ladders) = &ladders {
-            composite.add_event(Box::new(ladder_ground::LadderEvent::new(ladders.clone())));
+        if let Some(p) = water {
+            composite.add_event(Box::new(water::WaterEvent::new(p)));
         }
-        composite.slopes = ladders.is_none();
-        composite.ladders = ladders;
+        composite.core_mut().slopes = water.is_none();
         composite.add_event(Box::new(outcrop::OutcropEvent::new()));
         composite.add_event(Box::new(forest::ForestEvent::new()));
         composite.add_event(Box::new(den::DenEvent::new()));
@@ -916,6 +1001,7 @@ impl Composite {
     }
 
     pub fn add_event(&mut self, event: Box<dyn WorldEvent>) {
+        let core = self.core_mut();
         let lattice = HexLattice::new(event.scale());
 
         // Containment: one ring has to cover everything this event's features
@@ -937,11 +1023,11 @@ impl Composite {
         );
 
         // Pre-register indexes declared by this event (HashMap frozen after init)
-        self.indexes.set_registering_layer(self.events.len());
-        event.register_indexes(&mut self.indexes);
-        self.cell_caches.push(CellCache::new(self.events.len()));
-        self.lattices.push(lattice);
-        self.events.push(event);
+        core.indexes.set_registering_layer(core.events.len());
+        event.register_indexes(&mut core.indexes);
+        core.cell_caches.push(CellCache::new(core.events.len()));
+        core.lattices.push(lattice);
+        core.events.push(event);
     }
 
     /// Get the final tile state at (q, r): how anything outside the stack
@@ -951,7 +1037,7 @@ impl Composite {
         self.tile_on(1, q, r)
     }
 
-    /// The tile at (q, r) standing on the ground of the ladder's level `w`
+    /// The tile at (q, r) standing on the ground of the water layer's level `w`
     /// wide, whose cell is centred there: what a summary three times as
     /// wide reads its part at, so a far summary's cover stands on the
     /// ground it is drawn at and never builds the tiles under it. (q, r)
@@ -965,7 +1051,7 @@ impl Composite {
         }
         self.metrics.record(false);
 
-        let view = self.compose(w, q, r, |_, _| {});
+        let view = self.compose(self.events.len(), w, q, r, |_, _| {});
         if self.tiles.len() >= RECENT_TILES {
             self.tiles.clear();
         }
@@ -981,39 +1067,8 @@ impl Composite {
     #[cfg(feature = "inspect")]
     pub fn outputs_at(&self, q: i32, r: i32) -> (TileView, Vec<(&str, Option<TileOutput>)>) {
         let mut outputs = Vec::with_capacity(self.events.len());
-        let view = self.compose(1, q, r, |layer, out| outputs.push((self.events[layer].name(), out)));
+        let view = self.compose(self.events.len(), 1, q, r, |layer, out| outputs.push((self.events[layer].name(), out)));
         (view, outputs)
-    }
-
-    /// The tile at (q, r) on the level `w` wide through the stack: every
-    /// layer's neighbourhood deformed, then each layer queried over the
-    /// composite of those below it, `each` handed what it returned.
-    fn compose(&self, w: i64, q: i32, r: i32, mut each: impl FnMut(usize, Option<TileOutput>)) -> TileView {
-        {
-            let _s = tracing::debug_span!("deform").entered();
-            for layer in 0..self.events.len() {
-                let cell_id = self.lattices[layer].cell_id(q, r);
-                self.ensure_query_neighbourhood(layer, cell_id);
-            }
-        }
-
-        let mut view = TileView::on(w, q, r);
-        view.slopes = self.slopes;
-        let _s = tracing::debug_span!("query").entered();
-        for layer in 0..self.events.len() {
-            let cell_id = self.lattices[layer].cell_id(q, r);
-            // `view` already holds the composite of every layer below,
-            // which is the whole of what a query may read besides its
-            // own cell context.
-            let ctx = self.cell_context(layer, cell_id);
-            let _s = tracing::debug_span!("event_query", event = self.events[layer].name()).entered();
-            let out = self.timed(layer, Phase::Query, || self.events[layer].query(q, r, &view, &*ctx, self.seed));
-            if let Some(out) = &out {
-                view.compose(out);
-            }
-            each(layer, out);
-        }
-        view
     }
 
     /// Batch-materialize tiles. No global lock — each tile_at is independent.
@@ -1119,11 +1174,46 @@ impl Composite {
         EventMetricsSnapshot { visible, tile_hits, tile_misses, layers }
     }
 
+}
+
+impl Core {
+    /// The tile at (q, r) on the level `w` wide through the first `layers`
+    /// layers of the stack: each one's neighbourhood deformed, then each
+    /// queried over the
+    /// composite of those below it, `each` handed what it returned.
+    fn compose(self: &Arc<Self>, layers: usize, w: i64, q: i32, r: i32, mut each: impl FnMut(usize, Option<TileOutput>)) -> TileView {
+        {
+            let _s = tracing::debug_span!("deform").entered();
+            for layer in 0..layers {
+                let cell_id = self.lattices[layer].cell_id(q, r);
+                self.ensure_query_neighbourhood(layer, cell_id);
+            }
+        }
+
+        let mut view = TileView::on(w, q, r);
+        view.slopes = self.slopes;
+        let _s = tracing::debug_span!("query").entered();
+        for layer in 0..layers {
+            let cell_id = self.lattices[layer].cell_id(q, r);
+            // `view` already holds the composite of every layer below,
+            // which is the whole of what a query may read besides its
+            // own cell context.
+            let ctx = self.cell_context(layer, cell_id);
+            let _s = tracing::debug_span!("event_query", event = self.events[layer].name()).entered();
+            let out = self.timed(layer, Phase::Query, || self.events[layer].query(q, r, &view, &*ctx, self.seed));
+            if let Some(out) = &out {
+                view.compose(out);
+            }
+            each(layer, out);
+        }
+        view
+    }
+
     /// Run one phase of `layer`, its time charged to the layer's own code
     /// less the phases nested in it, and a deform charged as well to the
     /// layer whose read pulled it in.
     #[cfg(feature = "inspect")]
-    fn timed<R>(&self, layer: usize, phase: Phase, f: impl FnOnce() -> R) -> R {
+    fn timed<R>(self: &Arc<Self>, layer: usize, phase: Phase, f: impl FnOnce() -> R) -> R {
         RUNNING.with_borrow_mut(|running| running.push((layer, std::time::Duration::ZERO)));
         let start = std::time::Instant::now();
         let out = f();
@@ -1146,7 +1236,7 @@ impl Composite {
 
     #[cfg(not(feature = "inspect"))]
     #[inline(always)]
-    fn timed<R>(&self, _layer: usize, _phase: Phase, f: impl FnOnce() -> R) -> R {
+    fn timed<R>(self: &Arc<Self>, _layer: usize, _phase: Phase, f: impl FnOnce() -> R) -> R {
         f()
     }
 
@@ -1161,7 +1251,7 @@ impl Composite {
     /// a neighbour was cold stays wrong for the life of the composite, and two
     /// processes that touched tiles in a different order disagree about the
     /// terrain for the same seed.
-    fn ensure_query_neighbourhood(&self, layer: usize, cell_id: CellId) {
+    fn ensure_query_neighbourhood(self: &Arc<Self>, layer: usize, cell_id: CellId) {
         // Every tile in a cell shares one neighbourhood, and cells are never
         // evicted, so walking the ring once per cell is enough. Without this
         // gate the ring walk lands on the per-tile hot path and costs a Vec
@@ -1183,7 +1273,7 @@ impl Composite {
     /// is what lets `prepare` fold over the whole cell-plus-ring set: at deform
     /// time the ring may be cold, so a fold there would depend on the order
     /// cells were visited in.
-    fn cell_context(&self, layer: usize, cell_id: CellId) -> Arc<dyn Any + Send + Sync> {
+    fn cell_context(self: &Arc<Self>, layer: usize, cell_id: CellId) -> Arc<dyn Any + Send + Sync> {
         if let Some(c) = self.cell_caches[layer].contexts.get(&cell_id) {
             return c.clone();
         }
@@ -1202,7 +1292,7 @@ impl Composite {
     /// Deform the cells of `T`'s layer under `cell` of `lattice`, plus one
     /// ring, so an index read over them is complete. The reading layer's own
     /// index, or a higher one, is never deformed from here.
-    fn deform_under<T: CellIndex>(&self, reader: usize, lattice: &HexLattice, cell: CellId) {
+    fn deform_under<T: CellIndex>(self: &Arc<Self>, reader: usize, lattice: &HexLattice, cell: CellId) {
         let Some(layer) = self.indexes.layer_of::<T>() else { return };
         if layer >= reader {
             return;
@@ -1212,7 +1302,7 @@ impl Composite {
         }
     }
 
-    fn ensure_deformed(&self, layer: usize, cell_id: CellId) {
+    fn ensure_deformed(self: &Arc<Self>, layer: usize, cell_id: CellId) {
         // Fast path: already deformed
         if self.cell_caches[layer].has(cell_id) {
             self.cell_caches[layer].metrics.record(true);
@@ -1267,9 +1357,9 @@ impl common::summary::SummarySource for Composite {
             return None;
         }
         // A summary's parts are its cell's children, in the same order
-        // (`summary_parts_are_the_ladders_children`).
+        // (`summary_parts_are_the_waters_children`).
         let Some((z, fine, water, wet)) = self.level(w, &[(sq as i64, sr as i64)]).pop().flatten() else {
-            // A cell no ladder holds, open sea or a shore past a site's
+            // A cell no water layer holds, open sea or a shore past a site's
             // land, is read from its parts at their own level, as its
             // covers are: its tiles would build the ground under each.
             let (cq, cr) = common::summary::center_tile(r, sq, sr);
@@ -1290,14 +1380,14 @@ impl common::summary::SummarySource for Composite {
 
 #[cfg(test)]
 mod tests {
-    /// A summary's parts are the ladder's children of its cell, in the
-    /// ladder's order, so the ladder's wet bits are the summary's.
+    /// A summary's parts are the water layer's children of its cell, in the
+    /// water layer's order, so the water layer's wet bits are the summary's.
     #[test]
-    fn summary_parts_are_the_ladders_children() {
+    fn summary_parts_are_the_waters_children() {
         for r in [1, 4, 13, 40] {
             let d = common::summary::scale(r) as i64 / 3;
             let parts = common::summary::part_offsets(r).map(|(dq, dr)| (dq as i64, dr as i64));
-            assert_eq!(parts, crate::ladder::geom::CHILD_OFFSETS.map(|(oi, oj)| (oi * d, oj * d)), "the parts at r={r}");
+            assert_eq!(parts, crate::water::geom::CHILD_OFFSETS.map(|(oi, oj)| (oi * d, oj * d)), "the parts at r={r}");
         }
     }
 

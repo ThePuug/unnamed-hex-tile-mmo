@@ -166,7 +166,7 @@ struct Cli {
     steps: bool,
 
     /// Render as the client draws a distance band: summaries of this
-    /// radius (0 is the tiles; the ladder is 1, 4, 13, 40), each read from
+    /// radius (0 is the tiles; the water layer is 1, 4, 13, 40), each read from
     /// its seven sample tiles through the whole stack, ground, water and
     /// canopy, in place of the views, with the cost logged. What a band
     /// costs, and what survives it.
@@ -232,10 +232,10 @@ fn boundary_color(seg: &BoundarySegment) -> [u8; 3] {
     }
 }
 
-/// The ladder's level a picture reads the world at: the widest whose cells
+/// The water layer's level a picture reads the world at: the widest whose cells
 /// are no wider than a pixel, the tiles where a pixel is narrower than
 /// three of them. A pixel wider than a tile shows one reading whatever is
-/// read, and reading a tile for it makes the ladder build every tile round
+/// read, and reading a tile for it makes the water layer build every tile round
 /// it; the level as wide as the pixel is the same ground, built once.
 fn level_for(scale: f64) -> i64 {
     [243, 81, 27, 9, 3].into_iter().find(|&w| w as f64 <= scale).unwrap_or(1)
@@ -248,7 +248,7 @@ fn read_at(wx: f64, wy: f64, level: i64) -> (i32, i32) {
     if level == 1 {
         return (q, r);
     }
-    let (i, j) = world::ladder::geom::cube_round(q as f64 / level as f64, r as f64 / level as f64);
+    let (i, j) = world::water::geom::cube_round(q as f64 / level as f64, r as f64 / level as f64);
     ((i * level) as i32, (j * level) as i32)
 }
 
@@ -924,7 +924,7 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
     let river = cli.courses.then(|| {
         let own = s as i64;
         let at: Vec<(i64, i64)> = cells.iter().map(|&(sq, sr)| (sq as i64, sr as i64)).collect();
-        let mut courses: Vec<world::ladder::Course> = composite.courses(own, &at).into_iter().flatten().filter(|c| c.drawn <= own).collect();
+        let mut courses: Vec<world::water::Course> = composite.courses(own, &at).into_iter().flatten().filter(|c| c.drawn <= own).collect();
         // A river too wide for the band's level runs along the course of
         // the level that draws it: that level's cells over the view and a
         // ring of them, where a river crossing one leaves the next.
@@ -932,7 +932,7 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
         while wide <= 729 {
             let mut over: std::collections::HashSet<(i64, i64)> = std::collections::HashSet::new();
             for &(i, j) in &at {
-                let (a, b) = world::ladder::geom::cube_round((i * own) as f64 / wide as f64, (j * own) as f64 / wide as f64);
+                let (a, b) = world::water::geom::cube_round((i * own) as f64 / wide as f64, (j * own) as f64 / wide as f64);
                 over.extend([(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)].map(|(da, db)| (a + da, b + db)));
             }
             let over: Vec<(i64, i64)> = over.into_iter().collect();
@@ -975,7 +975,7 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
 /// pixel fades and never breaks. `origin` is the first pixel's position and
 /// `scale` the world units to a pixel; a tile's position in tiles is a
 /// world unit a tile.
-fn river_cover(courses: &[world::ladder::Course], origin: (f64, f64), w: usize, h: usize, scale: f64) -> Vec<f32> {
+fn river_cover(courses: &[world::water::Course], origin: (f64, f64), w: usize, h: usize, scale: f64) -> Vec<f32> {
     /// Straight pieces a curve is drawn in.
     const PIECES: usize = 16;
     let place = |(q, r): (f64, f64)| (q + r * 0.5, r * 3f64.sqrt() / 2.0);

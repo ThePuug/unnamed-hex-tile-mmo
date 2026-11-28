@@ -1551,7 +1551,7 @@ fn collect_and_build_summary_mesh(
             if let Some(cell) = cached(level, sq, sr) {
                 return Some(cell.ground());
             }
-            // A summary is the ladder's cell, which the tiles do not hold:
+            // A summary is the water layer's cell, which the tiles do not hold:
             // it is only ever the server's.
             if level >= common_bevy::summary::LOD_LEVELS[1] {
                 return None;

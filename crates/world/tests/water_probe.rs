@@ -1,4 +1,4 @@
-//! The real ground for the hex-ladder POC: every cell of every ladder level
+//! The real ground for the hex-water layer POC: every cell of every water layer level
 //! around the haven, read through the field and range layers and lithology.
 //! For each cell it writes the height at the cell's centre, the mean of the
 //! centre and the six midpoints of its edges, and the erodibility of the
@@ -8,7 +8,7 @@
 //! (i, j) of a level `w` tiles wide is centred on the tile `HAVEN + (i, j)·w`,
 //! so the haven is a centre at every level.
 //!
-//! Run: `LADDER_OUT=<dir> cargo test --release -p world --test ladder_probe -- --ignored --nocapture`
+//! Run: `WATER_OUT=<dir> cargo test --release -p world --test water_probe -- --ignored --nocapture`
 
 use std::io::Write;
 use std::time::Instant;
@@ -33,7 +33,7 @@ const LEVELS: [(i32, i32); 7] = [
 ];
 
 /// The field and range layers and lithology: the stack below the scarps,
-/// which the ladder takes over, and below what stands on the finished tile.
+/// which the water layer takes over, and below what stands on the finished tile.
 fn ground(seed: u64) -> Composite {
     let mut c = Composite::new(seed);
     c.add_event(Box::new(plates::PlateEvent::new()));
@@ -56,8 +56,8 @@ fn samples(w: i32) -> Vec<(i32, i32)> {
 
 #[test]
 #[ignore]
-fn export_ladder_ground() {
-    let out = std::env::var("LADDER_OUT").expect("LADDER_OUT names the directory to write to");
+fn export_water_ground() {
+    let out = std::env::var("WATER_OUT").expect("WATER_OUT names the directory to write to");
     std::fs::create_dir_all(&out).expect("the output directory");
     let c = ground(WORLD_SEED);
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());

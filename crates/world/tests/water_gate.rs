@@ -1,24 +1,24 @@
-//! The ladder over the real ground around the haven, its lattice anchored
+//! The water layer over the real ground around the haven, its lattice anchored
 //! at the world's origin: every level requested over a region, identity and
 //! seams checked, and every level written for the measures. The ground
 //! is the base layers read by `StackGround`, each cell at its nine
 //! children's centres.
-//! `LADDER_EXACT=1` checks identity by position and seams between requests
-//! made apart; `LADDER_WATER=0` runs it dry.
+//! `WATER_EXACT=1` checks identity by position and seams between requests
+//! made apart; `WATER_WATER=0` runs it dry.
 //!
-//! Run: `LADDER_OUT=<dir> cargo test --release -p world --test ladder_gate -- --ignored --nocapture --exact ladder_gate`
+//! Run: `WATER_OUT=<dir> cargo test --release -p world --test water_gate -- --ignored --nocapture --exact water_gate`
 //!
 //! Every probe prints what it is doing at least every 30 seconds.
 
 use std::io::Write;
 use std::time::Instant;
 
-use world::events::ladder_ground::{StackGround, AREA_PAD};
+use world::events::water::{StackGround, AREA_PAD};
 use world::events::Composite;
 use common::corner::meet;
-use world::ladder::geom::cube_round;
-use world::ladder::terrain::{Cell, Terrain};
-use world::ladder::{Bounds, Ground, Ladder, Level, Params, STAGES};
+use world::water::geom::cube_round;
+use world::water::terrain::{Cell, Terrain};
+use world::water::{Bounds, Ground, Landmass, Level, Params, STAGES};
 use world::WORLD_SEED;
 
 /// The haven's tile, as `common_bevy::haven::HAVEN_LOCATION` holds it.
@@ -51,10 +51,10 @@ fn haven_cell(w: i64) -> (i64, i64) {
 
 /// The levels to 27 as far as [`COARSE`] reaches either way of the haven's
 /// cell, the finer ones [`AREA_PAD`] of their cells past their region;
-/// `LADDER_SMALL` gives every level below the top the same reach in tiles,
+/// `WATER_SMALL` gives every level below the top the same reach in tiles,
 /// for a test.
 fn bounds() -> Vec<Bounds> {
-    let small: Option<i64> = std::env::var("LADDER_SMALL").ok().and_then(|s| s.parse().ok());
+    let small: Option<i64> = std::env::var("WATER_SMALL").ok().and_then(|s| s.parse().ok());
     COARSE
         .iter()
         .copied()
@@ -78,17 +78,12 @@ fn region_cells(w: i64) -> Vec<(i64, i64)> {
     (-h..=h).flat_map(|a| (-h..=h).map(move |b| (ci + a, cj + b))).collect()
 }
 
-/// How far either way of the haven the outlines are built over, in tiles.
-fn outline_half() -> f64 {
-    (COARSE[0].1 + 3 * COARSE[0].0) as f64
-}
-
 fn ground() -> StackGround {
-    StackGround::new(WORLD_SEED, HAVEN, outline_half())
+    StackGround::new(WORLD_SEED)
 }
 
-fn index_of(ladder: &Ladder<impl Ground>, w: i64) -> usize {
-    ladder.levels.iter().position(|l| l.w == w).expect("a level of the ladder")
+fn index_of(landmass: &Landmass<impl Ground>, w: i64) -> usize {
+    landmass.levels.iter().position(|l| l.w == w).expect("a level of the water layer")
 }
 
 /// Whether two fine cells are the same, bit for bit.
@@ -108,7 +103,7 @@ fn same_cell(a: &Option<Cell>, b: &Option<Cell>) -> bool {
 fn exact<G: Ground>(ground: &G, whole: &Terrain<G>, p: Params, out: &mut String) {
     let bounds = bounds();
     let mut draw = Draw(5);
-    let held = whole.ladder();
+    let held = whole.landmass();
     for (k, &(w, _, _)) in bounds.iter().enumerate().skip(1) {
         let h = region(w) / w;
         let (ci, cj) = haven_cell(w);
@@ -118,7 +113,7 @@ fn exact<G: Ground>(ground: &G, whole: &Terrain<G>, p: Params, out: &mut String)
         for _ in 0..3 {
             let c = (ci + draw.range(-h / 2, h / 2 + 1), cj + draw.range(-h / 2, h / 2 + 1));
             let one = Terrain::new_box(ground, &bounds, p);
-            one.ladder().request(k, &[c]);
+            one.landmass().request(k, &[c]);
             let mut block: Vec<(i64, i64)> = (-4..=4).flat_map(|a| (-4..=4).map(move |b| (c.0 + a, c.1 + b))).collect();
             for x in (1..block.len()).rev() {
                 let y = draw.range(0, x as i64 + 1) as usize;
@@ -126,10 +121,10 @@ fn exact<G: Ground>(ground: &G, whole: &Terrain<G>, p: Params, out: &mut String)
             }
             let apart = Terrain::new_box(ground, &bounds, p);
             for &cell in &block {
-                apart.ladder().request(k, &[cell]);
+                apart.landmass().request(k, &[cell]);
             }
             let wl = &held.levels[k];
-            let (one, apart) = (one.ladder(), apart.ladder());
+            let (one, apart) = (one.landmass(), apart.landmass());
             identical &= alike(&one.levels[k], wl, c.0, c.1) && alike(&apart.levels[k], wl, c.0, c.1);
             for m in [&one, &apart] {
                 let lv = &m.levels[k];
@@ -231,9 +226,9 @@ fn dump(dir: &str, lv: &Level) {
 /// its region, or a sample of 2000 where they are more, the height's
 /// difference from the dry ground met by that valley, rounded, and the
 /// cut's before rounding.
-fn truth<G: Ground>(ladder: &Ladder<G>, w: i64) -> String {
-    let k = index_of(ladder, w);
-    let lv = &ladder.levels[k];
+fn truth<G: Ground>(landmass: &Landmass<G>, w: i64) -> String {
+    let k = index_of(landmass, w);
+    let lv = &landmass.levels[k];
     let h = region(lv.w) / lv.w / 2;
     let (ci, cj) = haven_cell(lv.w);
     let mut cells: Vec<(i64, i64)> = (-h..=h)
@@ -249,7 +244,7 @@ fn truth<G: Ground>(ladder: &Ladder<G>, w: i64) -> String {
     if cells.is_empty() {
         return String::new();
     }
-    let whole = ladder.unlimited_cut(k, &cells);
+    let whole = landmass.unlimited_cut(k, &cells);
     let (mut steps, mut cuts, mut far) = (Vec::new(), Vec::new(), Vec::new());
     for (&(i, j), &t) in cells.iter().zip(&whole) {
         let c = lv.idx(i, j).unwrap();
@@ -283,9 +278,9 @@ fn truth<G: Ground>(ladder: &Ladder<G>, w: i64) -> String {
 /// Water floating over its ground at each level: over the built cells of
 /// its region, those whose water stands more than its bed's depth above the
 /// cell's own height, the largest excess, and the ten nearest the haven.
-fn floating<G: Ground>(ladder: &Ladder<G>) -> String {
+fn floating<G: Ground>(landmass: &Landmass<G>) -> String {
     let mut out = String::from("floating water: w: wet cells; floating (water more than its bed's depth above the cell); largest excess in levels\n");
-    for lv in &ladder.levels[1..] {
+    for lv in &landmass.levels[1..] {
         let h = region(lv.w) / lv.w;
         let (ci, cj) = haven_cell(lv.w);
         let (mut wet, mut float, mut worst) = (0u64, Vec::new(), 0.0f64);
@@ -312,10 +307,10 @@ fn floating<G: Ground>(ladder: &Ladder<G>) -> String {
 /// Faces in each level's drawn surface over its region: of the edges
 /// between two built cells, those where the corner rule leaves the two apart
 /// at either end, and of the corners, those it splits.
-fn faces<G: Ground>(ladder: &Ladder<G>) -> String {
+fn faces<G: Ground>(landmass: &Landmass<G>) -> String {
     let mut out = String::from("faces in the drawn surface: w: edges with a face of edges; corners split of corners
 ");
-    for lv in &ladder.levels[1..] {
+    for lv in &landmass.levels[1..] {
         let h = region(lv.w) / lv.w;
         let (ci, cj) = haven_cell(lv.w);
         let z = |i: i64, j: i64| lv.idx(i, j).filter(|&c| lv.exists[c] && lv.built.done(c)).map_or(f64::NAN, |c| lv.z.get(c));
@@ -367,7 +362,7 @@ fn run<G: Ground>(ground: &G, p: Params, dir: &str, log: &mut String) {
     status("building the top");
     let terrain = Terrain::new_box(ground, &bounds(), p);
     log.push_str(&format!("top {:.1}s\n", started.elapsed().as_secs_f64()));
-    let only: Option<i64> = std::env::var("LADDER_SMALL_REGION").ok().and_then(|s| s.parse().ok());
+    let only: Option<i64> = std::env::var("WATER_SMALL_REGION").ok().and_then(|s| s.parse().ok());
     let widths: Vec<i64> = FINE.iter().rev().copied().chain(COARSE[1..].iter().rev().map(|&(w, _)| w)).collect();
     for w in widths {
         let t = Instant::now();
@@ -384,28 +379,28 @@ fn run<G: Ground>(ground: &G, p: Params, dir: &str, log: &mut String) {
     }
     log.push_str(&format!("build_seconds {:.1}\n", started.elapsed().as_secs_f64()));
     {
-        let ladder = terrain.ladder();
-        for (k, lv) in ladder.levels.iter().enumerate() {
-            log.push_str(&format!("stats w={} route={:?} cost={:?}\n", lv.w, ladder.route_stats()[k], lv.cost()));
+        let landmass = terrain.landmass();
+        for (k, lv) in landmass.levels.iter().enumerate() {
+            log.push_str(&format!("stats w={} route={:?} cost={:?}\n", lv.w, landmass.route_stats()[k], lv.cost()));
         }
-        log.push_str(&timing(&ladder.levels, &ladder.timing()));
+        log.push_str(&timing(&landmass.levels, &landmass.timing()));
         for w in [243, 81, 27, 9, 3, 1] {
             status(&format!("checking {w} against every river"));
-            log.push_str(&truth(&ladder, w));
+            log.push_str(&truth(&landmass, w));
         }
-        log.push_str(&floating(&ladder));
-        log.push_str(&faces(&ladder));
+        log.push_str(&floating(&landmass));
+        log.push_str(&faces(&landmass));
     }
-    if std::env::var("LADDER_EXACT").is_ok_and(|v| v == "1") {
+    if std::env::var("WATER_EXACT").is_ok_and(|v| v == "1") {
         exact(ground, &terrain, p, log);
     }
     status("writing the dumps");
-    let ladder = terrain.ladder();
-    for lv in &ladder.levels {
+    let landmass = terrain.landmass();
+    for lv in &landmass.levels {
         dump(dir, lv);
     }
     let mut meta = String::from("w lo n layers lo_j n_j\n");
-    for lv in &ladder.levels {
+    for lv in &landmass.levels {
         meta.push_str(&format!("{} {} {} {} {} {}\n", lv.w, lv.lo, lv.n, 1, lv.lo_j, lv.n_j));
     }
     std::fs::write(format!("{dir}/levels.txt"), meta).expect("the levels");
@@ -413,18 +408,18 @@ fn run<G: Ground>(ground: &G, p: Params, dir: &str, log: &mut String) {
 
 #[test]
 #[ignore]
-fn ladder_gate() {
-    let dir = std::env::var("LADDER_OUT").expect("LADDER_OUT names the directory to write to");
+fn water_gate() {
+    let dir = std::env::var("WATER_OUT").expect("WATER_OUT names the directory to write to");
     std::fs::create_dir_all(&dir).expect("the output directory");
-    let water = std::env::var("LADDER_WATER").map_or(true, |v| v != "0");
-    let cut_from = match std::env::var("LADDER_CUT").as_deref() {
+    let water = std::env::var("WATER_WATER").map_or(true, |v| v != "0");
+    let cut_from = match std::env::var("WATER_CUT").as_deref() {
         Ok("C") => 1_102_500.0,
         Ok("A") => 1_500.0,
         _ => Params::default().cut_from,
     };
     let mut log = format!("ground stack, water {water}\n");
     let g = ground();
-    let ring = std::env::var("LADDER_RING").ok().and_then(|r| r.parse().ok()).unwrap_or(world::ladder::RING);
+    let ring = std::env::var("WATER_RING").ok().and_then(|r| r.parse().ok()).unwrap_or(world::water::RING);
     log.push_str(&format!("cut from {cut_from}, ring {ring}\n"));
     run(&g, Params { water, cut_from, ring, ..Params::default() }, &dir, &mut log);
     print!("{log}");
@@ -469,7 +464,7 @@ fn same(a: f64, b: f64) -> bool {
     a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan())
 }
 
-/// What two ladders hold differently at a cell of level k: its height,
+/// What two water layers hold differently at a cell of level k: its height,
 /// each vertex's height, carved ground and routing, each named with its vertex.
 fn differs(a: &Level, b: &Level, i: i64, j: i64) -> Vec<String> {
     let (Some(ca), Some(cb)) = (a.idx(i, j), b.idx(i, j)) else { return vec!["held".into()] };
@@ -498,7 +493,7 @@ fn differs(a: &Level, b: &Level, i: i64, j: i64) -> Vec<String> {
         if !same(a.floor.get(va), b.floor.get(vb)) {
             bad.push(format!("floor{t} {} / {}", a.floor.get(va), b.floor.get(vb)));
         }
-        // A receiver is a vertex index in each ladder's own arrays.
+        // A receiver is a vertex index in each water layer's own arrays.
         let r = |lv: &Level, v: i64| (v >= 0).then(|| lv.vertex(v as usize));
         if r(a, a.rec.get(va)) != r(b, b.rec.get(vb)) {
             bad.push(format!("rec{t} {:?} / {:?}", r(a, a.rec.get(va)), r(b, b.rec.get(vb))));
@@ -599,19 +594,19 @@ fn timed(f: &mut dyn FnMut()) -> (f64, f64) {
 }
 
 
-/// The ladder's tiles beside the game's over 512 by 512 tiles in axial q
+/// The water layer's tiles beside the game's over 512 by 512 tiles in axial q
 /// and r centred on the haven, rows by r then q, heights in levels as
-/// little-endian i16: `ladder_z.bin` from a fresh ladder at the defaults;
-/// `ladder_dry_z.bin`, the same with water off; `game_z.bin`, the same
+/// little-endian i16: `water_z.bin` from a fresh water layer at the defaults;
+/// `water_dry_z.bin`, the same with water off; `game_z.bin`, the same
 /// tiles through `Composite::standard`, the game's path, which must
-/// equal `ladder_z`; `stack_z.bin` from `Composite::standard`; and
-/// `ladder_bed.bin`, a byte, 1 where water stands over a tile;
-/// `ladder_water.bin`, its water's surface as i16, -32768 where none; and
+/// equal `water_z`; `stack_z.bin` from `Composite::standard`; and
+/// `water_bed.bin`, a byte, 1 where water stands over a tile;
+/// `water_surface.bin`, its water's surface as i16, -32768 where none; and
 /// `meta.json`.
 #[test]
 #[ignore]
-fn ladder_export() {
-    let dir = std::env::var("LADDER_OUT").expect("LADDER_OUT names the directory to write to");
+fn water_export() {
+    let dir = std::env::var("WATER_OUT").expect("WATER_OUT names the directory to write to");
     std::fs::create_dir_all(&dir).expect("the output directory");
     const SIDE: i64 = 512;
     let half = SIDE / 2;
@@ -626,26 +621,26 @@ fn ladder_export() {
         })
         .collect()
     };
-    status("the ladder's tiles");
+    status("the water layer's tiles");
     let started = Instant::now();
     let terrain = Terrain::new_box(&g, &bounds, Params::default());
-    let tiles: Vec<Cell> = terrain.cells(1, &cells).into_iter().map(|c| c.expect("a tile the ladder holds")).collect();
-    let ladder_s = started.elapsed().as_secs_f64();
-    std::fs::write(format!("{dir}/ladder_z.bin"), i16s(&mut tiles.iter().map(|c| c.z))).expect("ladder_z");
-    std::fs::write(format!("{dir}/ladder_bed.bin"), tiles.iter().map(|c| c.water.is_some() as u8).collect::<Vec<u8>>()).expect("ladder_bed");
+    let tiles: Vec<Cell> = terrain.cells(1, &cells).into_iter().map(|c| c.expect("a tile the water layer holds")).collect();
+    let water_s = started.elapsed().as_secs_f64();
+    std::fs::write(format!("{dir}/water_z.bin"), i16s(&mut tiles.iter().map(|c| c.z))).expect("water_z");
+    std::fs::write(format!("{dir}/water_bed.bin"), tiles.iter().map(|c| c.water.is_some() as u8).collect::<Vec<u8>>()).expect("water_bed");
     std::fs::write(
-        format!("{dir}/ladder_water.bin"),
+        format!("{dir}/water_surface.bin"),
         tiles.iter().flat_map(|c| c.water.map_or(i16::MIN, |w| w as i16).to_le_bytes()).collect::<Vec<u8>>(),
     )
-    .expect("ladder_water");
-    status("the ladder's tiles with water off");
+    .expect("water_surface");
+    status("the water layer's tiles with water off");
     let started = Instant::now();
     let dry = Terrain::new_box(&g, &bounds, Params { water: false, ..Params::default() });
-    let dry_tiles: Vec<Cell> = dry.cells(1, &cells).into_iter().map(|c| c.expect("a tile the ladder holds")).collect();
+    let dry_tiles: Vec<Cell> = dry.cells(1, &cells).into_iter().map(|c| c.expect("a tile the water layer holds")).collect();
     let dry_s = started.elapsed().as_secs_f64();
-    std::fs::write(format!("{dir}/ladder_dry_z.bin"), i16s(&mut dry_tiles.iter().map(|c| c.z))).expect("ladder_dry_z");
+    std::fs::write(format!("{dir}/water_dry_z.bin"), i16s(&mut dry_tiles.iter().map(|c| c.z))).expect("water_dry_z");
     let higher = tiles.iter().zip(&dry_tiles).filter(|(w, d)| w.z > d.z).count();
-    status("the game's tiles, laddered");
+    status("the game's tiles, site_water");
     let started = Instant::now();
     let game = Composite::standard(WORLD_SEED);
     let coords: Vec<(i32, i32)> = cells.iter().map(|&(q, r)| (q as i32, r as i32)).collect();
@@ -661,7 +656,7 @@ fn ladder_export() {
     std::fs::write(format!("{dir}/stack_z.bin"), stack_z).expect("stack_z");
     let stack_s = started.elapsed().as_secs_f64();
     let meta = format!(
-        "{{\n  \"haven\": {{\"q\": {}, \"r\": {}}},\n  \"origin\": {{\"q\": {}, \"r\": {}}},\n  \"size\": {{\"q\": {SIDE}, \"r\": {SIDE}}},\n  \"order\": \"rows by r, then q\",\n  \"rise\": {},\n  \"rise_unit\": \"a level's height in tile spacings, centre to centre\",\n  \"orientation\": \"flat-top\",\n  \"ladder_anchor\": {{\"q\": 0, \"r\": 0}}\n}}\n",
+        "{{\n  \"haven\": {{\"q\": {}, \"r\": {}}},\n  \"origin\": {{\"q\": {}, \"r\": {}}},\n  \"size\": {{\"q\": {SIDE}, \"r\": {SIDE}}},\n  \"order\": \"rows by r, then q\",\n  \"rise\": {},\n  \"rise_unit\": \"a level's height in tile spacings, centre to centre\",\n  \"orientation\": \"flat-top\",\n  \"water_anchor\": {{\"q\": 0, \"r\": 0}}\n}}\n",
         HAVEN.0,
         HAVEN.1,
         hq - half,
@@ -671,31 +666,31 @@ fn ladder_export() {
     std::fs::write(format!("{dir}/meta.json"), meta).expect("meta");
     let beds = tiles.iter().filter(|c| c.water.is_some()).count();
     let out = format!(
-        "export: {SIDE} by {SIDE} tiles; ladder {ladder_s:.1} s, dry {dry_s:.1} s, game (laddered) {game_s:.1} s, stack {stack_s:.1} s; {beds} tiles under water; tiles higher wet than dry: {higher}; game against ladder, largest difference: {off}\n"
+        "export: {SIDE} by {SIDE} tiles; water layer {water_s:.1} s, dry {dry_s:.1} s, game (site_water) {game_s:.1} s, stack {stack_s:.1} s; {beds} tiles under water; tiles higher wet than dry: {higher}; game against water layer, largest difference: {off}\n"
     );
     print!("{out}");
     std::fs::write(format!("{dir}/export.txt"), out).expect("the export log");
 }
 
-/// Where water raises ground: the ladder built wet and dry over the tiles'
+/// Where water raises ground: the water layer built wet and dry over the tiles'
 /// region, and at each level, over the cells both built, how many stand
 /// higher wet.
 #[test]
 #[ignore]
-fn ladder_wet_dry() {
+fn water_wet_dry() {
     let g = ground();
     let bounds = bounds();
     let h = region(1);
     let cells: Vec<(i64, i64)> = (-h..=h).flat_map(|i| (-h..=h).map(move |j| (HAVEN.0 as i64 + i, HAVEN.1 as i64 + j))).collect();
-    status("the wet ladder");
+    status("the wet water layer");
     let wet = Terrain::new_box(&g, &bounds, Params::default());
     wet.cells(1, &cells);
-    status("the dry ladder");
+    status("the dry water layer");
     let dry = Terrain::new_box(&g, &bounds, Params { water: false, ..Params::default() });
     dry.cells(1, &cells);
     let mut out = String::from("w: cells both built; higher wet\n");
     {
-        let (a, b) = (wet.ladder(), dry.ladder());
+        let (a, b) = (wet.landmass(), dry.landmass());
         for k in 1..a.levels.len() {
             let (la, lb) = (&a.levels[k], &b.levels[k]);
             let (mut both, mut up) = (0, 0);
@@ -709,7 +704,7 @@ fn ladder_wet_dry() {
         }
     }
     print!("{out}");
-    if let Ok(dir) = std::env::var("LADDER_OUT") {
+    if let Ok(dir) = std::env::var("WATER_OUT") {
         std::fs::write(format!("{dir}/wet_dry.txt"), out).expect("the wet-dry table");
     }
 }
@@ -720,7 +715,7 @@ fn ladder_wet_dry() {
 /// steps), which the cross-level standard holds under one.
 #[test]
 #[ignore]
-fn ladder_bands() {
+fn water_bands() {
     let g = ground();
     let terrain = Terrain::new_box(&g, &bounds(), Params::default());
     let mut out = String::from("coarse fine: pairs; |difference| / coarse span p50 p99 max (steps max)\n");
@@ -738,7 +733,7 @@ fn ladder_bands() {
         out.push_str(&format!("{coarse} {fine}: {}; {:.3} {:.3} {:.3} ({})\n", d.len(), q(0.5), q(0.99), q(1.0), d[d.len() - 1]));
     }
     print!("{out}");
-    if let Ok(dir) = std::env::var("LADDER_OUT") {
+    if let Ok(dir) = std::env::var("WATER_OUT") {
         std::fs::write(format!("{dir}/bands.txt"), out).expect("the band table");
     }
 }

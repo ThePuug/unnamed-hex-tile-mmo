@@ -16,6 +16,7 @@ fn without_dens() -> Composite {
     composite.add_event(Box::new(tilt::TiltEvent::new()));
     composite.add_event(Box::new(motion::MotionEvent::new()));
     composite.add_event(Box::new(thrusting::ThrustingEvent::new()));
+    composite.add_event(Box::new(world::events::sky::SkyEvent::new()));
     composite.add_event(Box::new(thickening::ThickeningEvent::new()));
     composite.add_event(Box::new(lithology::LithologyEvent::new()));
     composite.add_event(Box::new(world::events::scarp::ScarpEvent::new()));

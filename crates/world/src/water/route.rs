@@ -63,7 +63,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use super::geom::{facet, parent_of, pos3, vertex_cells, vnbr, wander, xy};
 use super::mask::Mask;
 use super::paged::Paged;
-use super::{drained, graded_slope, head_of, water, Level, Params, Pass};
+use super::{cut, drained, graded_slope, head_of, Level, Params, Pass};
 
 pub(super) const WALK_SEED: u64 = 0x5761_6c6b_5f5f_5f5f; // "Walk____"
 
@@ -747,7 +747,7 @@ fn course_of(par: &Level, lv: &Level, u: usize, p: &Params) -> Option<Vec<(i64, 
         let e = ((b.0 - a.0) / 3, (b.1 - a.1) / 3);
         // A level finer than draws the channel would bend it within its own
         // width.
-        let bend = if w >= water::drawn_at(water::bed(par.flow.get(u), p)) {
+        let bend = if w >= cut::drawn_at(cut::bed(par.flow.get(u), p)) {
             let draw = crate::noise::hash_f64(a.0 + 7 * b.0, a.1 + 7 * b.1, BEND_SEED);
             let turn = if draw < 1.0 / 3.0 { Some((-e.1, e.0 + e.1)) } else if draw >= 2.0 / 3.0 { Some((e.0 + e.1, -e.0)) } else { None };
             turn.map(|f| (a.0 + e.0 + f.0, a.1 + e.1 + f.1))

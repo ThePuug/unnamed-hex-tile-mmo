@@ -7,9 +7,9 @@
 //! (`common_bevy::systems::movement::is_tile_blocked`), two with a jump,
 //! drops any distance, and never enters a tile its solid cover fills
 //! (`COVER_FULL`). Elevations are rounded as `Composite::elevation_at`
-//! rounds them; the ground before the ladder cut it is `Composite::base`.
+//! rounds them; the ground before the water layer cut it is `Composite::base`.
 //!
-//! Run one test at a time, each builds the ladder over what it reads:
+//! Run one test at a time, each builds the water layer over what it reads:
 //!   cargo test -p world --release --test walk_probe -- --ignored --nocapture locate_range
 //!   cargo test -p world --release --test walk_probe -- --ignored --nocapture sections
 //!   cargo test -p world --release --test walk_probe -- --ignored --nocapture forelimb_patch
@@ -378,7 +378,7 @@ fn report_section(label: &str, v: &[Sample]) {
     let cut: Vec<f64> = fl.iter().map(|s| s.base - s.z as f64).collect();
     let deep = cut.iter().filter(|&&c| c >= 3.0).count();
     let wet = fl.iter().filter(|s| s.water).count();
-    println!("  forelimb cut by the ladder (base - final): mean {:.1}, max {:.1}; {} of {} tiles cut 3+ levels; {} with water",
+    println!("  forelimb cut by the water layer (base - final): mean {:.1}, max {:.1}; {} of {} tiles cut 3+ levels; {} with water",
         cut.iter().sum::<f64>() / cut.len() as f64, cut.iter().cloned().fold(f64::MIN, f64::max), deep, fl.len(), wet);
     println!("  profile every ~20 tiles:");
     println!("  {:>6} {:>6} {:>8} {:>8} {:>6} {:>5} {:>14}", "s", "d", "relief", "base", "final", "water", "hex");
@@ -504,7 +504,7 @@ fn build_patch(range: &Range, s0: f64, s1: f64, fore: f64, back: f64) -> Patch {
     });
     let picked: Vec<(i32, i32, f64, f64)> = found.into_iter().flatten().collect();
     println!("  patch: {} tiles picked in {:.1}s; reading them through the composite...", picked.len(), t.elapsed().as_secs_f64());
-    // The ladder keeps what it builds, some 16 KB a tile read, so the
+    // The water layer keeps what it builds, some 16 KB a tile read, so the
     // patch is read in stretches of strike, each on a fresh composite:
     // every value is a function of its position, whatever was read before.
     let t = Instant::now();
@@ -1062,7 +1062,7 @@ fn write_png(path: &Path, w: usize, h: usize, rgb: &[u8]) {
 // ── The coast ───────────────────────────────────────────────────────────────
 
 /// A front within 15000 tiles of the spawn whose foreland is sea before the
-/// ladder: the nearest few, then a section of the final ground across the
+/// water layer: the nearest few, then a section of the final ground across the
 /// nearest.
 #[test]
 #[ignore]
@@ -1113,7 +1113,7 @@ fn convergent_coast() {
             coasts.push((dist, wx, wy, plate, k, (nx, ny)));
         }
     }
-    println!("  fronts whose foreland is sea 60 and 150 tiles out (before the ladder), nearest first:");
+    println!("  fronts whose foreland is sea 60 and 150 tiles out (before the water layer), nearest first:");
     for c in &coasts {
         let (q, r) = world_to_hex(c.1, c.2);
         let e = &outlines.plate(c.3).unwrap().edges[c.4];

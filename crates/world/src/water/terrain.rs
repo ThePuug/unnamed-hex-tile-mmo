@@ -1,8 +1,8 @@
-//! The ladder for readers on many threads: every level built on request
+//! The water layer for readers on many threads: every level built on request
 //! down to the tiles, separate areas on separate threads at once
-//! ([`Ladder`]), a cell read as it was built.
+//! ([`Landmass`]), a cell read as it was built.
 
-use super::{Bounds, Ground, Ladder, Params};
+use super::{Bounds, Ground, Landmass, Params};
 
 /// A cell of any level as a reader takes it.
 #[derive(Clone, Debug)]
@@ -27,48 +27,48 @@ pub struct Cell {
     pub wet_parts: u16,
 }
 
-/// The ladder, shared by its readers.
+/// The water layer, shared by its readers.
 pub struct Terrain<'g, G: Ground> {
-    ladder: Ladder<'g, G>,
+    landmass: Landmass<'g, G>,
 }
 
 impl<'g, G: Ground> Terrain<'g, G> {
-    /// The ladder over `bounds` ([`Ladder::new_box`]), its top built.
+    /// The water layer over `bounds` ([`Landmass::new_box`]), its top built.
     pub fn new_box(ground: &'g G, bounds: &[Bounds], p: Params) -> Self {
-        Terrain::from_ladder(Ladder::new_box(ground, bounds, p))
+        Terrain::from_landmass(Landmass::new_box(ground, bounds, p))
     }
 
-    pub fn from_ladder(ladder: Ladder<'g, G>) -> Self {
-        Terrain { ladder }
+    pub fn from_landmass(landmass: Landmass<'g, G>) -> Self {
+        Terrain { landmass }
     }
 
-    /// The ladder, for a request or a reading of it.
-    pub fn ladder(&self) -> &Ladder<'g, G> {
-        &self.ladder
+    /// The water layer, for a request or a reading of it.
+    pub fn landmass(&self) -> &Landmass<'g, G> {
+        &self.landmass
     }
 
     pub fn params(&self) -> Params {
-        self.ladder.p
+        self.landmass.p
     }
 
     /// Cells of the level `w` wide, built where not yet; none where the
-    /// ladder has no such level or does not hold the cell.
+    /// water layer has no such level or does not hold the cell.
     pub fn cells(&self, w: i64, at: &[(i64, i64)]) -> Vec<Option<Cell>> {
-        let ladder = &self.ladder;
-        let Some(k) = ladder.levels.iter().position(|l| l.w == w) else { return vec![None; at.len()] };
-        let lv = &ladder.levels[k];
+        let landmass = &self.landmass;
+        let Some(k) = landmass.levels.iter().position(|l| l.w == w) else { return vec![None; at.len()] };
+        let lv = &landmass.levels[k];
         let held: Vec<(i64, i64)> = at.iter().copied().filter(|&(i, j)| lv.idx(i, j).is_some_and(|c| lv.exists[c])).collect();
         if !held.is_empty() {
-            ladder.request(k, &held);
+            landmass.request(k, &held);
         }
         at.iter().map(|&(i, j)| lv.idx(i, j).filter(|&c| lv.exists[c] && lv.built.done(c)).map(|c| cell(lv, c))).collect()
     }
 
     /// The rivers leaving each cell of the level `w` wide at `at`
-    /// ([`Ladder::courses`]); none where the ladder has no such level.
+    /// ([`Landmass::courses`]); none where the water layer has no such level.
     pub fn courses(&self, w: i64, at: &[(i64, i64)]) -> Vec<Vec<super::Course>> {
-        match self.ladder.levels.iter().position(|l| l.w == w) {
-            Some(k) => self.ladder.courses(k, at),
+        match self.landmass.levels.iter().position(|l| l.w == w) {
+            Some(k) => self.landmass.courses(k, at),
             None => vec![Vec::new(); at.len()],
         }
     }

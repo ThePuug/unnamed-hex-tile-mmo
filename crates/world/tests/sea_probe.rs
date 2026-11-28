@@ -3,12 +3,12 @@
 //! sea told apart by the plate it stands on and by whether the sea reaches
 //! it. Ocean below the sea is the sea. Continental ground below the sea is
 //! a bay where samples below the sea join it to the ocean, and a basin the
-//! sea cannot reach where none do: ground the ladder floods as sea today
+//! sea cannot reach where none do: ground the water layer floods as sea today
 //! (`top::route_top`'s sinks) that would be dry or a lake. Ocean above the
 //! sea is land standing on an oceanic plate.
 //!
-//! The ground is the ladder's own before water cuts it
-//! (`ladder_ground::StackGround`), and no river grades below the sea, so
+//! The ground is the water layer's own before water cuts it
+//! (`water::StackGround`), and no river grades below the sea, so
 //! what stands below it here does after the cut. A basin narrower than the
 //! spacing is not seen.
 //!
@@ -21,9 +21,9 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use world::continents;
-use world::events::ladder_ground::{top_bounds, StackGround};
+use world::events::water::{top_bounds, StackGround};
 use world::events::thrusting::Outlines;
-use world::ladder::Ground;
+use world::water::Ground;
 use world::lattice::DIRECTIONS;
 use world::{hex_to_world, world_to_hex, WORLD_SEED};
 
@@ -57,9 +57,8 @@ fn sea_probe() {
     let corners = [(lo.0, lo.1), (hi.0, lo.1), (lo.0, hi.1), (hi.0, hi.1)].map(|(i, j)| hex_to_world((i * w) as i32, (j * w) as i32));
     let (x0, x1) = corners.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |a, c| (a.0.min(c.0), a.1.max(c.0)));
     let (y0, y1) = corners.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |a, c| (a.0.min(c.1), a.1.max(c.1)));
-    let centre = world_to_hex((x0 + x1) / 2.0, (y0 + y1) / 2.0);
     let half = (x1 - x0).max(y1 - y0) / 2.0 + w as f64;
-    let ground = StackGround::new(WORLD_SEED, centre, half);
+    let ground = StackGround::new(WORLD_SEED);
     let outlines = Outlines::in_box((x0 + x1) / 2.0, (y0 + y1) / 2.0, half, WORLD_SEED);
 
     let (ni, nj) = (((hi.0 - lo.0) * w / step) as usize, ((hi.1 - lo.1) * w / step) as usize);
@@ -173,9 +172,9 @@ fn sea_probe() {
 struct ByHeight<'a>(&'a StackGround, bool);
 
 impl Ground for ByHeight<'_> {
-    fn at(&self, q: i64, r: i64) -> world::ladder::Point {
+    fn at(&self, q: i64, r: i64) -> world::water::Point {
         let point = self.0.at(q, r);
-        world::ladder::Point { ocean: self.1 || point.ocean, ..point }
+        world::water::Point { ocean: self.1 || point.ocean, ..point }
     }
     fn height(&self, q: i64, r: i64) -> f64 {
         self.0.height(q, r)
@@ -185,7 +184,7 @@ impl Ground for ByHeight<'_> {
     }
 }
 
-/// What taking the sea from the plate changes: a site's ladder built twice
+/// What taking the sea from the plate changes: a site's water layer built twice
 /// over one ground, the sea its plate's and the sea every ground below it,
 /// and every cell of one level set beside its twin. `SEA_LEVEL` is the
 /// level's width, 81 by default.
@@ -194,33 +193,29 @@ impl Ground for ByHeight<'_> {
 #[test]
 #[ignore]
 fn sea_change() {
-    use world::events::ladder_ground::landmass_bounds;
-    use world::ladder::terrain::Terrain;
-    use world::ladder::{Ladder, Params};
+    use world::events::water::landmass_bounds;
+    use world::water::terrain::Terrain;
+    use world::water::{Landmass, Params};
 
     let started = Instant::now();
     let (hx, hy) = hex_to_world(HAVEN.0, HAVEN.1);
     let site = continents::land_site(hx, hy, WORLD_SEED).expect("the haven stands on land");
     let level: i64 = std::env::var("SEA_LEVEL").ok().map_or(81, |s| s.parse().expect("a level's width"));
     let top_box = top_bounds(WORLD_SEED, site).expect("a site with land");
-    let (w, lo, hi) = top_box;
-    let corners = [(lo.0, lo.1), (hi.0, lo.1), (lo.0, hi.1), (hi.0, hi.1)].map(|(i, j)| hex_to_world((i * w) as i32, (j * w) as i32));
-    let (x0, x1) = corners.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |a, c| (a.0.min(c.0), a.1.max(c.0)));
-    let (y0, y1) = corners.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |a, c| (a.0.min(c.1), a.1.max(c.1)));
-    let ground = StackGround::new(WORLD_SEED, world_to_hex((x0 + x1) / 2.0, (y0 + y1) / 2.0), (x1 - x0).max(y1 - y0) / 2.0 + w as f64);
+    let ground = StackGround::new(WORLD_SEED);
     // `SEA_SAME=1` builds the plate's rule twice, to show two builds agree.
     let old_ground = ByHeight(&ground, std::env::var("SEA_SAME").is_err());
     let p = Params::default();
 
-    let top = Ladder::top(&ground, top_box, p);
+    let top = Landmass::top(&ground, top_box, p);
     let bounds = landmass_bounds(&top, WORLD_SEED, site);
-    let plate = Terrain::from_ladder(Ladder::with_top(&ground, &bounds, p, Some(top)));
-    let top = Ladder::top(&old_ground, top_box, p);
-    let height = Terrain::from_ladder(Ladder::with_top(&old_ground, &bounds, p, Some(top)));
+    let plate = Terrain::from_landmass(Landmass::with_top(&ground, &bounds, p, Some(top)));
+    let top = Landmass::top(&old_ground, top_box, p);
+    let height = Terrain::from_landmass(Landmass::with_top(&old_ground, &bounds, p, Some(top)));
     println!("progress {:.0}s: both tops built", started.elapsed().as_secs_f64());
     // `SEA_TOP=1` sets the two tops' routing side by side, vertex by vertex.
     if std::env::var("SEA_TOP").is_ok() {
-        let (a, b) = (&plate.ladder().levels[0], &height.ladder().levels[0]);
+        let (a, b) = (&plate.landmass().levels[0], &height.landmass().levels[0]);
         let nn = a.cap();
         let mut n = [0usize; 6];
         let mut shown = 0;
@@ -233,7 +228,7 @@ fn sea_change() {
             if diff[2] && a.z.get(v) >= 0.0 && shown < 40 && (a.graded.get(v) - b.graded.get(v)).abs() > 20.0 || (diff[2] && a.graded.get(v).is_nan() != b.graded.get(v).is_nan() && shown < 40) {
                 shown += 1;
                 let (t, i, j) = a.vertex(v);
-                let (q3, r3) = world::ladder::geom::pos3(t, i, j, a.w);
+                let (q3, r3) = world::water::geom::pos3(t, i, j, a.w);
                 println!("  tile ({}, {}) z {} sea {} rec {} / {} acc {:.0} / {:.0} graded {:.1} / {:.1} floor {} / {}", q3 / 3, r3 / 3, a.z.get(v), a.sea(v), a.rec.get(v), b.rec.get(v), a.acc.get(v), b.acc.get(v), a.graded.get(v), b.graded.get(v), a.floor.get(v), b.floor.get(v));
             }
         }
@@ -260,7 +255,7 @@ fn sea_change() {
         println!("view written in {:.0}s", started.elapsed().as_secs_f64());
         return;
     }
-    let &(_, lo, hi) = bounds.iter().find(|b| b.0 == level).expect("a level of the ladder");
+    let &(_, lo, hi) = bounds.iter().find(|b| b.0 == level).expect("a level of the water layer");
     let rows: Vec<i64> = (lo.0..hi.0).collect();
     let (mut cells, mut land, mut moved, mut wetter, mut drier, mut most) = (0usize, 0usize, 0usize, 0usize, 0usize, 0.0f64);
     let mut steps = [0usize; 5];
@@ -321,7 +316,7 @@ fn nearest_shore() {
         Err(_) => (HAVEN.0 as i64, HAVEN.1 as i64),
     };
     let (fx, fy) = hex_to_world(from.0 as i32, from.1 as i32);
-    let ground = StackGround::new(WORLD_SEED, (from.0 as i32, from.1 as i32), 20_000.0);
+    let ground = StackGround::new(WORLD_SEED);
     let sea = |q: i64, r: i64| ground.height(q, r) < 0.0 && ground.ocean(q, r);
     let far = |q: i64, r: i64| {
         let (x, y) = hex_to_world(q as i32, r as i32);
@@ -352,7 +347,7 @@ fn shore_profile() {
     let spec = std::env::var("SEA_FROM").expect("SEA_FROM names the tile");
     let (q, r) = spec.split_once(',').expect("a tile is q,r");
     let from: (i64, i64) = (q.trim().parse().expect("a whole q"), r.trim().parse().expect("a whole r"));
-    let ground = StackGround::new(WORLD_SEED, (from.0 as i32, from.1 as i32), 4_000.0);
+    let ground = StackGround::new(WORLD_SEED);
     for (name, (dq, dr)) in [("along q", (1i64, 0i64)), ("along r", (0, 1)), ("along q - r", (1, -1))] {
         let heights: Vec<String> = (-40..=40).map(|k| format!("{:.2}", ground.height(from.0 + k * dq, from.1 + k * dr))).collect();
         println!("{name}: {}", heights.join(" "));
@@ -420,7 +415,7 @@ fn floor_out() {
     let (q, r) = spec.split_once(',').expect("a tile is q,r");
     let from: (i64, i64) = (q.trim().parse().expect("a whole q"), r.trim().parse().expect("a whole r"));
     let step: i64 = std::env::var("SEA_STEP").ok().map_or(60, |s| s.parse().expect("a whole step"));
-    let ground = StackGround::new(WORLD_SEED, (from.0 as i32, from.1 as i32), 8_000.0);
+    let ground = StackGround::new(WORLD_SEED);
     println!("at {from:?}: {:.1}; every {step} tiles", ground.height(from.0, from.1));
     for (dq, dr) in DIRECTIONS {
         let heights: Vec<String> = (1..=30).map(|k| format!("{:.0}", ground.height(from.0 + k * step * dq as i64, from.1 + k * step * dr as i64))).collect();
@@ -430,8 +425,8 @@ fn floor_out() {
 
 /// The ground as the game builds it, through the whole stack, out from
 /// `SEA_FROM` along each of the six ways every `SEA_STEP` tiles (2 by
-/// default) for sixty steps, beside the stack's ground under the ladder:
-/// where the two part, the ladder moved the sea floor.
+/// default) for sixty steps, beside the stack's ground under the water layer:
+/// where the two part, the water layer moved the sea floor.
 ///
 /// Run: `SEA_FROM=q,r cargo test -p world --features inspect --test sea_probe floor_built -- --ignored --nocapture`
 #[test]
@@ -442,7 +437,7 @@ fn floor_built() {
     let from: (i32, i32) = (q.trim().parse().expect("a whole q"), r.trim().parse().expect("a whole r"));
     let step: i32 = std::env::var("SEA_STEP").ok().map_or(2, |s| s.parse().expect("a whole step"));
     let world = world::events::Composite::standard(WORLD_SEED);
-    let under = StackGround::new(WORLD_SEED, from, 8_000.0);
+    let under = StackGround::new(WORLD_SEED);
     for (dq, dr) in DIRECTIONS {
         let at = |k: i32| (from.0 + k * step * dq, from.1 + k * step * dr);
         let built: Vec<String> = (0..60).map(|k| format!("{:.0}", world.tile_at(at(k).0, at(k).1).elevation)).collect();

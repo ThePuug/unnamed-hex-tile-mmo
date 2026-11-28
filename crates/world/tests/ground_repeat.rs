@@ -7,10 +7,10 @@ use std::process::Command;
 use world::events::Composite;
 use world::WORLD_SEED;
 
-/// Cells (w, i, j) two runs of the ladder's gate once read differently.
+/// Cells (w, i, j) two runs of the water layer's gate once read differently.
 const CELLS: [(i64, i64, i64); 8] = [(729, -49, 145), (729, -48, 141), (729, -48, 142), (243, 451, -1), (243, 453, -3), (81, 1338, -4), (81, 1340, -8), (27, 4105, -68)];
 
-/// The ladder's samples of each cell: its centre and the midpoints of its
+/// The water layer's samples of each cell: its centre and the midpoints of its
 /// six edges.
 fn tiles() -> Vec<(i32, i32)> {
     CELLS

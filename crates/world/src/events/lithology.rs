@@ -61,6 +61,7 @@ use crate::tectonic::{aged, PlateId, PLATE_SPACING};
 use crate::{hex_to_world, substrate_on};
 use super::plates::{coasts_of, shore_gate, Coasts, GRAPH_CELL_SCALE};
 use super::thrusting::{outlines_of, Outlines, Standing, OUTLINE_REACH, RANGE_RISE, REPOSE_GRADE, WEDGE_REACH};
+use super::field::{blocks_of, Sampled};
 use super::{gradient_of, CellScope, TileOutput, TileView, WorldEvent};
 
 const COVER_SEED: u64 = 0x436f_7665_725f_5f5f; // "Cover___"
@@ -294,6 +295,15 @@ impl LithologyEvent {
     pub fn new() -> Self { LithologyEvent }
 }
 
+/// How much of the sky's water the rock at a position keeps
+/// ([`Rock::retention`]), as its samples are published
+/// ([`Sampled`]`<Retention>`).
+pub struct Retention;
+
+/// How far apart the rock's samples lie, in tiles: about a stand's
+/// width, which is as fine as the forest reads what its soil keeps.
+pub const ROCK_SPACING: i32 = 128;
+
 /// What a cell's tiles read: the coasts and outlines in reach.
 struct Reach {
     coasts: Coasts,
@@ -308,8 +318,17 @@ impl WorldEvent for LithologyEvent {
     /// an outline lies from a position in its plate.
     fn max_influence(&self) -> u32 { OUTLINE_REACH as u32 }
 
-    /// Nothing to place: the rock is read off the plate graph.
-    fn deform(&self, _scope: &CellScope) {}
+    fn register_indexes(&self, registry: &mut super::index::IndexRegistry) {
+        registry.pre_register::<Sampled<Retention>>();
+    }
+
+    /// What the rock keeps, sampled over the cell and filled as it is
+    /// read.
+    fn deform(&self, scope: &CellScope) {
+        let (reach, seed) = (Reach { coasts: coasts_of(scope), outlines: Arc::new(outlines_of(scope)) }, scope.seed());
+        let source = Arc::new(move |wx: f64, wy: f64| rock_on(wx, wy, seed, &reach.coasts, &reach.outlines).rock.retention());
+        scope.publish::<Sampled<Retention>>(blocks_of(scope, ROCK_SPACING, source));
+    }
 
     fn prepare(&self, scope: &CellScope) -> Box<dyn Any + Send + Sync> {
         Box::new(Reach { coasts: coasts_of(scope), outlines: Arc::new(outlines_of(scope)) })

@@ -1,4 +1,4 @@
-//! Each site's top: its size and how long its ladder takes to build, and
+//! Each site's top: its size and how long its water layer takes to build, and
 //! the band along the edge of the land it owns, every tile of it, read for
 //! land. A tile is a site's land where its position as the plates are drawn
 //! lies within `LAND_REACH` of a plate the site claimed
@@ -17,11 +17,11 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use world::continents::{self, LAND_REACH};
-use world::events::ladder_ground::{top_bounds, Laddered};
+use world::events::water::{top_bounds, SiteWater};
 use world::events::plates::{warp, WARP_STEP};
 use world::events::Composite;
-use world::ladder::geom::cube_round;
-use world::ladder::Params;
+use world::water::geom::cube_round;
+use world::water::Params;
 use world::{hex_to_world, WORLD_SEED};
 
 const HAVEN: (i32, i32) = (107289, -7677);
@@ -66,20 +66,20 @@ fn top_probe() {
             println!("site {id:?}: claims no land");
             continue;
         };
-        progress(&format!("site {id:?}: building its ladder"));
+        progress(&format!("site {id:?}: building its water layer"));
         let t = Instant::now();
-        let laddered = Laddered::with(WORLD_SEED, id, Params::default());
+        let site_water = SiteWater::with(WORLD_SEED, id, Params::default());
         let seconds = t.elapsed().as_secs_f64();
         let (land_cells, peak) = {
-            let ladder = laddered.terrain().ladder();
-            let top = &ladder.levels[0];
+            let landmass = site_water.terrain().landmass();
+            let top = &landmass.levels[0];
             let land = (0..top.cap()).filter(|&c| top.exists[c] && top.z.get(c) >= 0.0).count();
             let peak = (0..top.cap()).filter(|&c| top.exists[c]).map(|c| top.z.get(c)).fold(f64::NEG_INFINITY, f64::max);
             (land, peak)
         };
-        drop(laddered);
+        drop(site_water);
         println!(
-            "site {id:?}: top {w} wide, {} by {} = {} cells, {land_cells} on land, peak {peak}; ladder built in {seconds:.1} s",
+            "site {id:?}: top {w} wide, {} by {} = {} cells, {land_cells} on land, peak {peak}; water layer built in {seconds:.1} s",
             hi.0 - lo.0,
             hi.1 - lo.1,
             (hi.0 - lo.0) * (hi.1 - lo.1)

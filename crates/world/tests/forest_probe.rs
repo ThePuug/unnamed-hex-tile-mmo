@@ -28,6 +28,7 @@ fn without_forest() -> Composite {
     c.add_event(Box::new(TiltEvent::new()));
     c.add_event(Box::new(MotionEvent::new()));
     c.add_event(Box::new(ThrustingEvent::new()));
+    c.add_event(Box::new(world::events::sky::SkyEvent::new()));
     c.add_event(Box::new(ThickeningEvent::new()));
     c.add_event(Box::new(LithologyEvent::new()));
     c.add_event(Box::new(world::events::scarp::ScarpEvent::new()));
