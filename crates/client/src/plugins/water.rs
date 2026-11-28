@@ -13,10 +13,13 @@ use bevy::{
     mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology},
     pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline},
     prelude::*,
-    render::render_resource::{AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError},
+    render::render_resource::{AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError},
     shader::ShaderRef,
 };
-use crate::systems::closeup::CloseupCamera;
+use crate::{
+    resources::{RenderOrigin, TerrainOrigin},
+    systems::closeup::CloseupCamera,
+};
 use bevy_camera::visibility::NoFrustumCulling;
 use bevy_light::NotShadowCaster;
 
@@ -86,9 +89,10 @@ fn ring(inner: f32, outer: f32, first: f32) -> Mesh {
 #[derive(Component)]
 struct WaterSurface;
 
-/// The one material every water surface is drawn with: the sea's, shared
-/// by the lakes and rivers the mesh regions build, lit by the cel light as
-/// the ground is, so it holds its blue from every angle.
+/// The material the lakes and rivers the mesh regions build are drawn
+/// with: the sea's water, with the rim of its surf and none of its
+/// breakers, lit by the cel light as the ground is, so it holds its blue
+/// from every angle.
 #[derive(Resource)]
 pub struct WaterMaterial(pub Handle<Water>);
 
@@ -96,9 +100,31 @@ pub type Water = ExtendedMaterial<StandardMaterial, Level>;
 
 /// A level face over the standard material it is lit as, by the cel
 /// light, and placed on the world's curve (`systems::curve`): water is
-/// drawn as far as the land is, so it bends with it.
+/// drawn as far as the land is, so it bends with it. Its surf is drawn
+/// over it (`shaders/water.wesl`), read from the depth prepass: only
+/// blended water has the ground under it there, so a solid one takes none.
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
-pub struct Level {}
+pub struct Level {
+    #[uniform(100)]
+    surf: Surf,
+}
+
+/// How much of the surf a water takes, each none to whole, and the origin
+/// its shards are laid on the world's tiles from, so they hold through a
+/// rebase: `lap` the foam along everything the water meets, `swell` the
+/// shallows' lighter tone and the breakers coming in over them.
+#[derive(Clone, Copy, Debug, Default, ShaderType)]
+struct Surf {
+    origin: TerrainOrigin,
+    lap: f32,
+    swell: f32,
+}
+
+impl Level {
+    fn surfed(lap: f32, swell: f32) -> Self {
+        Self { surf: Surf { origin: TerrainOrigin::default(), lap, swell } }
+    }
+}
 
 impl MaterialExtension for Level {
     fn vertex_shader() -> ShaderRef {
@@ -108,7 +134,7 @@ impl MaterialExtension for Level {
         "shaders/water_vertex.wesl".into()
     }
     fn fragment_shader() -> ShaderRef {
-        "shaders/cel_material.wesl".into()
+        "shaders/water.wesl".into()
     }
     /// A vertex's place alone, in every pass: a level face has one normal.
     fn specialize(
@@ -131,6 +157,7 @@ impl Plugin for WaterPlugin {
         // After camera movement so the plane never lags a frame behind and
         // reveals its own edge at the horizon.
         app.add_systems(PostUpdate, follow_camera);
+        app.add_systems(Update, follow_origin.run_if(resource_changed::<RenderOrigin>));
     }
 }
 
@@ -142,24 +169,24 @@ fn setup_water_surface(
     let near = meshes.add(ring(0.0, CLEAR_TO, 4.0));
     let far = meshes.add(ring(CLEAR_TO, water_extent(), CLEAR_TO * (RING_GROWTH - 1.0)));
 
-    let material = materials.add(Water {
-        base: StandardMaterial {
-            base_color: Color::srgba(0.07, 0.26, 0.42, 0.78),
-            alpha_mode: AlphaMode::Blend,
-            // Seen from below when the camera dips under the waterline.
-            double_sided: true,
-            cull_mode: None,
-            ..default()
-        },
-        extension: Level {},
-    });
-    commands.insert_resource(WaterMaterial(material.clone()));
+    let clear = StandardMaterial {
+        base_color: Color::srgba(0.07, 0.26, 0.42, 0.78),
+        alpha_mode: AlphaMode::Blend,
+        // Seen from below when the camera dips under the waterline.
+        double_sided: true,
+        cull_mode: None,
+        ..default()
+    };
+    let sea = materials.add(Water { base: clear.clone(), extension: Level::surfed(1.0, 1.0) });
+    // A river is shallow from bank to bank, and breakers would cover it.
+    let inland = materials.add(Water { base: clear, extension: Level::surfed(1.0, 0.0) });
+    commands.insert_resource(WaterMaterial(inland));
     let solid = materials.add(Water {
         base: StandardMaterial { base_color: Color::srgb(0.07, 0.26, 0.42), double_sided: true, cull_mode: None, ..default() },
-        extension: Level {},
+        extension: Level::surfed(0.0, 0.0),
     });
 
-    for (mesh, material) in [(near, material), (far, solid)] {
+    for (mesh, material) in [(near, sea), (far, solid)] {
         commands.spawn((
             Mesh3d(mesh),
             MeshMaterial3d(material),
@@ -184,5 +211,13 @@ fn follow_camera(
         transform.translation.x = cam.translation.x;
         transform.translation.z = cam.translation.z;
         transform.translation.y = SEA_LEVEL_Y;
+    }
+}
+
+/// Lays every water's shards from the render origin as it moves.
+fn follow_origin(origin: Res<RenderOrigin>, mut materials: ResMut<Assets<Water>>) {
+    let origin = TerrainOrigin::of(&origin);
+    for (_, material) in materials.iter_mut() {
+        material.extension.surf.origin = origin;
     }
 }
