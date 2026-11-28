@@ -420,18 +420,22 @@ fn stands_of(scope: &CellScope) -> Vec<Stand> {
 }
 
 /// What a cell's tiles share: every stand reaching the cell, from the
-/// cell and its ring, bucketed by where it reaches.
+/// cell and its ring, bucketed by where it reaches. A bucket names its
+/// stands by their place in `stands`: a stand lies in ten or so buckets,
+/// and a cell holds stands by the hundred thousand.
 pub struct Reach {
-    grid: HexSpatialGrid<Stand>,
+    stands: Vec<Stand>,
+    grid: HexSpatialGrid<u32>,
 }
 
 impl Reach {
     pub fn new(stands: impl Iterator<Item = Stand>) -> Self {
+        let stands: Vec<Stand> = stands.collect();
         let mut grid = HexSpatialGrid::new(STAND_REACH);
-        for s in stands {
-            grid.insert_radius(s.wx, s.wy, s.reach(), s);
+        for (k, s) in stands.iter().enumerate() {
+            grid.insert_radius(s.wx, s.wy, s.reach(), k as u32);
         }
-        Reach { grid }
+        Reach { stands, grid }
     }
 
     /// The stands over a position as one: the densest of them, so thin
@@ -442,7 +446,7 @@ impl Reach {
         let mut trees = 0.0;
         let mut weight = 0.0;
         if let Some(stands) = self.grid.cell_contents(self.grid.cell_at(wx, wy)) {
-            for s in stands {
+            for s in stands.iter().map(|&k| &self.stands[k as usize]) {
                 let u = s.share_at(wx, wy);
                 if u >= 1.0 {
                     continue;
@@ -569,11 +573,19 @@ impl WorldEvent for ForestEvent {
         scope.publish::<StandIndex>(ForestCell { stands: stands_of(scope) });
     }
 
-    /// Every stand reaching the cell, from the cell and its ring.
+    /// Every stand reaching the cell, from the cell and its ring: of the
+    /// ring's, those near enough its edge, a few in a hundred.
     fn prepare(&self, scope: &CellScope) -> Box<dyn Any + Send + Sync> {
+        let lattice = scope.lattice();
+        let (cq, cr) = lattice.cell_center(scope.cell());
+        let (cx, cy) = hex_to_world(cq, cr);
+        // No tile of the cell lies further from its centre than its
+        // radius, and a tile's ground half a tile past that.
+        let within = lattice.radius as f64 + 1.0;
+        let reaches = |s: &&Stand| (s.wx - cx).hypot(s.wy - cy) <= within + s.reach();
         let stands: Vec<Stand> = scope
             .read::<StandIndex>()
-            .map(|idx| idx.features().cloned().collect())
+            .map(|idx| idx.features().filter(reaches).cloned().collect())
             .unwrap_or_default();
         Box::new(Reach::new(stands.into_iter()))
     }
