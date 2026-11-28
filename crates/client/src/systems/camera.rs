@@ -367,6 +367,20 @@ pub fn grade() -> ColorGrading {
     }
 }
 
+/// The water's surface over a tile as it is drawn: the sea's where no
+/// river or lake stands higher.
+fn water_y(q: i32, r: i32, map: &Map) -> f32 {
+    map.water_at(q, r).map_or(SEA_LEVEL_Y, |w| height_y(w as f32 - 0.5).max(SEA_LEVEL_Y))
+}
+
+/// The height of what is seen at the tile whose ground is `floor`: its
+/// standing level, or the water over it where that lies higher. What the
+/// view is posed by, since a sea is looked at across its surface and
+/// never down at its bed.
+fn seen_y(floor: qrz::Qrz, map: &Map) -> f32 {
+    standing_y(floor, map).max(water_y(floor.q, floor.r, map))
+}
+
 /// How far a ray is marched against the loaded tiles, in world units, and
 /// in how many steps: spaced as squares, dense near and sparse far.
 const MARCH_STEPS: u32 = 12;
@@ -375,7 +389,8 @@ const MARCH_STEPS: u32 = 12;
 /// within `reach`: `Ok(Some(t))` at that distance along the ray,
 /// `Ok(None)` when it flies free, `Err(())` when it crosses ground that
 /// is not loaded before meeting any. Read against the tiles' standing
-/// heights, so a slope reads at the resolution of its tiles. The ray is
+/// heights, or the water over them, so a slope reads at the resolution of
+/// its tiles. The ray is
 /// in rendered coordinates, read on the map through `origin`.
 fn march(from: Vec3, dir: Vec3, reach: f32, map: &Map, origin: &RenderOrigin) -> Result<Option<f32>, ()> {
     for i in 1..=MARCH_STEPS {
@@ -384,7 +399,7 @@ fn march(from: Vec3, dir: Vec3, reach: f32, map: &Map, origin: &RenderOrigin) ->
         let at = from + dir * t;
         let here = origin.tile_at(map, at);
         let Some((floor, _)) = map.get_by_qr(here.q, here.r) else { return Err(()) };
-        if at.y <= standing_y(floor, map) {
+        if at.y <= seen_y(floor, map) {
             return Ok(Some(t));
         }
     }
@@ -431,7 +446,7 @@ fn ground_tilt(player: Vec3, rings: [f32; 2], map: &Map, origin: &RenderOrigin) 
             let at = player + Vec3::new(p.x, 0.0, p.y);
             let here = origin.tile_at(map, at);
             let (floor, _) = map.get_by_qr(here.q, here.r)?;
-            let h = standing_y(floor, map) - player.y;
+            let h = seen_y(floor, map) - player.y;
             xh += p.x * h;
             zh += p.y * h;
             xx += p.x * p.x;
@@ -566,7 +581,7 @@ fn heights_under(at: Vec3, map: &Map, origin: &RenderOrigin) -> Option<(f32, f32
     let tallest = (0..common::TILE_SLOTS as usize)
         .filter_map(|k| solid_extent(cover, here.q, here.r, k))
         .fold(0.0_f32, |top, (_, height)| top.max(height));
-    let water = map.water_at(here.q, here.r).map_or(SEA_LEVEL_Y, |w| height_y(w as f32 - 0.5).max(SEA_LEVEL_Y));
+    let water = water_y(here.q, here.r, map);
     Some((ground, ground + tallest, water))
 }
 
