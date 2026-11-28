@@ -1049,14 +1049,18 @@ impl Composite {
     /// The surface water stands at over a tile as a z-level, or None where
     /// the tile is dry. Surface and ground round to the same steps, and a
     /// surface at a step covers the tiles below it and leaves the tiles at
-    /// it dry, so ground under less than half a step of water is dry.
+    /// it dry, so ground under less than half a step of water is dry. The
+    /// sea is the one water held to no step: it stands at zero over all
+    /// the ground below zero, as it is drawn, or the half level of shelf
+    /// under it would be called land.
     pub fn water_at(&self, q: i32, r: i32) -> Option<i32> {
         Self::water_of(&self.tile_at(q, r))
     }
 
     fn water_of(view: &TileView) -> Option<i32> {
         let surface = view.water?.round() as i32;
-        (surface > view.elevation.round() as i32).then_some(surface)
+        let under_the_sea = surface == 0 && view.elevation < 0.0;
+        (surface > view.elevation.round() as i32 || under_the_sea).then_some(surface)
     }
 
     /// What stands in a tile's slots.
