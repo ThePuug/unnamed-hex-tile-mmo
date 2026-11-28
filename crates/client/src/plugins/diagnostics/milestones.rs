@@ -18,15 +18,16 @@ pub fn log_started() {
 }
 
 /// Log each change of stage. Entering `Playing` carries the terrain count
-/// it entered with, since the loading screen also gives up after a limit:
-/// fewer chunks than wanted, or builds still running, means it gave up.
+/// it entered with, since the loading screen also gives up on a stall:
+/// fewer chunks or far regions than wanted, or builds still running, means
+/// it gave up.
 pub fn log_stage(mut transitions: MessageReader<StateTransitionEvent<Stage>>, loading: Res<Loading>) {
     for transition in transitions.read() {
         let Some(entered) = transition.entered else { continue };
         if entered == Stage::Playing {
-            let (have, want) = loading.chunks;
+            let ((have, want), (regions, of_regions)) = (loading.chunks, loading.regions);
             info!(
-                "milestone: stage {:?} -> {entered:?} ({have}/{want} chunks, {} builds running)",
+                "milestone: stage {:?} -> {entered:?} ({have}/{want} chunks, {regions}/{of_regions} far regions, {} builds running)",
                 transition.exited,
                 loading.building,
             );

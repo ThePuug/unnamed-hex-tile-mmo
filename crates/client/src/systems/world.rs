@@ -1410,6 +1410,17 @@ fn level_cut(
     }
 }
 
+/// The mesh regions a player standing on `loc` is drawn once every chunk
+/// the server streams round it has arrived: what a loading world counts
+/// its building against, a number that holds still while the chunks come.
+pub fn regions_when_streamed(loc: &common_bevy::components::Loc) -> std::collections::HashSet<common_bevy::summary_mesh::MeshRegionKey> {
+    let chunks = common_bevy::chunk::calculate_visible_chunks(common_bevy::chunk::loc_to_chunk(**loc), common_bevy::chunk::FIXED_STREAM_RADIUS)
+        .into_iter()
+        .collect();
+    let (wx, wz) = common_bevy::geometry::flat_top_tile_center(loc.q, loc.r, 1.0);
+    compute_band_regions(Vec2::new(wx, wz), &chunks, 0.0, common_bevy::chunk::FIXED_STREAM_APOTHEM_WU)
+}
+
 /// The mesh regions every band wants around `at`. Local bands (within
 /// `local_boundary_wu`, the extent the Map can serve) are gated on loaded
 /// chunks; remote bands beyond it are not, their data being the server's

@@ -1,12 +1,12 @@
 //! The screens that stand in front of the world until it is played: the
-//! connection's state, the character, the loading bar. The round trip to
+//! connection's state, the character, the loading world's lines. The round trip to
 //! the server shows over every stage, the world included.
 
 use std::{collections::VecDeque, time::Duration};
 
 use bevy::prelude::*;
 
-use super::{Loading, Stage};
+use super::{Loading, Stage, LINES};
 use crate::{
     network::{ClientNet, Link},
     systems::equipment_panel::CloseupView,
@@ -24,11 +24,19 @@ pub struct Detail;
 #[derive(Component)]
 pub struct Preview;
 
+/// The loading world's lines, one to each thing it loads.
 #[derive(Component)]
-pub struct Bar;
+pub struct Lines;
+
+/// A line's name, its bar's fill and its count, each by the line's place.
+#[derive(Component)]
+pub struct LineName(usize);
 
 #[derive(Component)]
-pub struct BarFill;
+pub struct LineFill(usize);
+
+#[derive(Component)]
+pub struct LineCount(usize);
 
 #[derive(Component)]
 pub struct Rtt;
@@ -38,7 +46,10 @@ const STATUS: Color = Color::srgb(0.85, 0.75, 0.55);
 const DETAIL: Color = Color::srgb(0.55, 0.55, 0.55);
 const BAR_BACK: Color = Color::srgb(0.15, 0.15, 0.15);
 const BAR_FILL: Color = Color::srgb(0.75, 0.6, 0.3);
-const BAR_WIDTH: f32 = 480.0;
+const BAR_WIDTH: f32 = 300.0;
+/// The room a line's name takes before its bar, and its count after.
+const NAME_WIDTH: f32 = 250.0;
+const COUNT_WIDTH: f32 = 110.0;
 /// The preview's size on screen: the closeup's texture, at three quarters.
 const PREVIEW: Vec2 = Vec2::new(420.0, 540.0);
 
@@ -72,12 +83,31 @@ pub fn setup(mut commands: Commands, assets: Res<AssetServer>) {
                 TextColor(STATUS),
             ));
             parent
-                .spawn((
-                    Bar,
-                    Node { width: Val::Px(BAR_WIDTH), height: Val::Px(10.0), display: Display::None, ..default() },
-                    BackgroundColor(BAR_BACK),
-                ))
-                .with_child((BarFill, Node { width: Val::Percent(0.0), height: Val::Percent(100.0), ..default() }, BackgroundColor(BAR_FILL)));
+                .spawn((Lines, Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(8.0), display: Display::None, ..default() }))
+                .with_children(|lines| {
+                    for line in 0..LINES {
+                        lines
+                            .spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(12.0), ..default() })
+                            .with_children(|row| {
+                                row.spawn((
+                                    LineName(line),
+                                    Node { width: Val::Px(NAME_WIDTH), ..default() },
+                                    Text::new(""),
+                                    TextFont { font_size: FontSize::Px(14.0), ..default() },
+                                    TextColor(DETAIL),
+                                ));
+                                row.spawn((Node { width: Val::Px(BAR_WIDTH), height: Val::Px(8.0), ..default() }, BackgroundColor(BAR_BACK)))
+                                    .with_child((LineFill(line), Node { width: Val::Percent(0.0), height: Val::Percent(100.0), ..default() }, BackgroundColor(BAR_FILL)));
+                                row.spawn((
+                                    LineCount(line),
+                                    Node { width: Val::Px(COUNT_WIDTH), ..default() },
+                                    Text::new(""),
+                                    TextFont { font_size: FontSize::Px(14.0), ..default() },
+                                    TextColor(DETAIL),
+                                ));
+                            });
+                    }
+                });
             parent.spawn((
                 Detail,
                 Text::new(""),
@@ -110,9 +140,7 @@ pub fn draw(
     loading: Res<Loading>,
     time: Res<Time<Real>>,
     mut backdrop: Query<&mut Visibility, With<Backdrop>>,
-    mut preview: Query<&mut Node, (With<Preview>, Without<Bar>, Without<BarFill>)>,
-    mut bar: Query<&mut Node, (With<Bar>, Without<Preview>, Without<BarFill>)>,
-    mut fill: Query<&mut Node, (With<BarFill>, Without<Preview>, Without<Bar>)>,
+    mut preview: Query<&mut Node, With<Preview>>,
     mut status: Query<&mut Text, (With<Status>, Without<Detail>)>,
     mut detail: Query<&mut Text, (With<Detail>, Without<Status>)>,
 ) {
@@ -124,12 +152,6 @@ pub fn draw(
     }
     if let Ok(mut node) = preview.single_mut() {
         let display = shown(stage == Stage::CharacterSelect);
-        if node.display != display {
-            node.display = display;
-        }
-    }
-    if let Ok(mut node) = bar.single_mut() {
-        let display = shown(stage == Stage::Loading);
         if node.display != display {
             node.display = display;
         }
@@ -148,15 +170,8 @@ pub fn draw(
         },
         Stage::CharacterSelect => ("Adventurer".to_string(), "Left/Right turn".to_string()),
         Stage::Loading => {
-            let (have, want) = loading.chunks;
-            let doing = if want == 0 {
-                "waiting for the world".to_string()
-            } else if have < want {
-                format!("terrain {have} / {want} chunks")
-            } else {
-                format!("building terrain, {} regions to go", loading.building)
-            };
-            ("Entering the world".to_string(), doing)
+            let doing = if loading.streamed().1 == 0 { "waiting for the world" } else { "" };
+            ("Entering the world".to_string(), doing.to_string())
         }
         Stage::Playing => (String::new(), String::new()),
     };
@@ -170,8 +185,46 @@ pub fn draw(
             text.0 = detailed;
         }
     }
-    if let (Stage::Loading, Ok(mut node)) = (stage, fill.single_mut()) {
-        node.width = Val::Percent(100.0 * loading.progress().clamp(0.0, 1.0));
+}
+
+/// The loading world's lines: each thing it loads by name, a bar filled by
+/// the share of it there, and that share in numbers.
+#[allow(clippy::type_complexity)]
+pub fn draw_lines(
+    stage: Res<State<Stage>>,
+    loading: Res<Loading>,
+    mut lines: Query<&mut Node, (With<Lines>, Without<LineFill>)>,
+    mut names: Query<(&LineName, &mut Text), Without<LineCount>>,
+    mut fills: Query<(&LineFill, &mut Node), Without<Lines>>,
+    mut counts: Query<(&LineCount, &mut Text), Without<LineName>>,
+) {
+    let loading_now = *stage.get() == Stage::Loading;
+    if let Ok(mut node) = lines.single_mut() {
+        // Out of the layout, not merely hidden, so what stays is centred alone.
+        let display = if loading_now { Display::Flex } else { Display::None };
+        if node.display != display {
+            node.display = display;
+        }
+    }
+    if !loading_now {
+        return;
+    }
+    let said = loading.lines();
+    for (LineName(line), mut text) in &mut names {
+        let name = said.get(*line).map_or("", |l| l.name.as_str());
+        if text.0 != name {
+            text.0 = name.to_string();
+        }
+    }
+    for (LineFill(line), mut node) in &mut fills {
+        let share = said.get(*line).filter(|l| l.want > 0).map_or(0.0, |l| l.have as f32 / l.want as f32);
+        node.width = Val::Percent(100.0 * share.clamp(0.0, 1.0));
+    }
+    for (LineCount(line), mut text) in &mut counts {
+        let count = said.get(*line).map_or(String::new(), |l| format!("{} / {}", l.have, l.want));
+        if text.0 != count {
+            text.0 = count;
+        }
     }
 }
 

@@ -5,7 +5,8 @@
 //! The client runs through `Stage`s. It connects, retrying on its own with
 //! a growing wait, and waits at the character screen; Play asks the server
 //! to put the character in the world, and the world loads until the
-//! terrain the server streams has arrived and been built. Leaving the world,
+//! terrain the server streams, the tiles and the whole far view, has
+//! arrived and been built. Leaving the world,
 //! by the menu or by losing the server, takes everything the world put on
 //! the client down again, so the next entry starts from nothing.
 
@@ -20,6 +21,8 @@ use bevy::prelude::*;
 
 use common_bevy::{
     chunk::{calculate_visible_chunks, loc_to_chunk, FIXED_STREAM_RADIUS},
+    geometry::flat_top_tile_center,
+    summary_mesh::{streamed_regions, MeshRegionKey},
     components::{
         entity_type::{actor::*, EntityType},
         Actor, Loc,
@@ -74,8 +77,11 @@ impl ComputedStates for InWorld {
 #[derive(Resource, Default)]
 pub struct Entered(pub bool);
 
-/// How long the loading screen waits for terrain before showing the world
-/// anyway: a chunk the server never sends must not hold the player out.
+/// How long the loading screen waits with nothing arriving and nothing
+/// built before showing the world anyway: terrain the server never sends
+/// must not hold the player out. The far view takes minutes where the
+/// server has not made it before, so the wait is on a stall, never on the
+/// whole.
 const LOADING_LIMIT: Duration = Duration::from_secs(60);
 /// How many frames in a row no terrain build may be in flight before the
 /// terrain counts as settled: a build is dispatched the frame after its
@@ -87,28 +93,59 @@ const QUIET_FRAMES: u32 = 10;
 pub struct Loading {
     /// Chunks streamed of those the server streams around the player.
     pub chunks: (usize, usize),
+    /// Far regions streamed of those the server streams around the player,
+    /// every level's out to the far view's reach.
+    pub regions: (usize, usize),
+    /// The same, level by level, the finest first: a level's radius, and
+    /// its regions streamed of those the server streams.
+    pub levels: Vec<(u32, usize, usize)>,
     /// Terrain builds in flight or waiting their turn.
     pub building: usize,
-    /// The most builds seen in flight at once, which `building` counts down from.
-    pub building_peak: usize,
+    /// Regions of terrain standing built, of those drawn round the player
+    /// once everything streamed has arrived.
+    pub built: (usize, usize),
+    /// The far regions the server streams a player where this one entered,
+    /// found once: the server sends for the tile it entered on. And the
+    /// regions drawn round it there.
+    wanted: Option<Vec<MeshRegionKey>>,
+    drawn: Option<Vec<MeshRegionKey>>,
     quiet: u32,
+    /// When something last arrived or a build last finished.
     since: Duration,
 }
 
 impl Loading {
-    /// The share loaded, 0 to 1: the chunks for most of the bar, the builds
-    /// for the rest.
-    pub fn progress(&self) -> f32 {
-        let (have, want) = self.chunks;
-        let chunks = if want == 0 { 0.0 } else { have as f32 / want as f32 };
-        let built = if self.building_peak == 0 { 1.0 } else { 1.0 - self.building as f32 / self.building_peak as f32 };
-        if have < want || want == 0 {
-            0.85 * chunks
-        } else {
-            0.85 + 0.15 * built
-        }
+    /// What the server streams, chunks and far regions together: how much
+    /// has arrived, and how much there is.
+    pub fn streamed(&self) -> (usize, usize) {
+        (self.chunks.0 + self.regions.0, self.chunks.1 + self.regions.1)
+    }
+
+    /// Each thing the world loads, in the order it comes: the tiles, the
+    /// far view a level at a time from the finest, and the terrain built
+    /// of them.
+    pub fn lines(&self) -> Vec<Line> {
+        let mut lines = vec![Line { name: "Tiles".to_string(), have: self.chunks.0, want: self.chunks.1 }];
+        lines.extend(self.levels.iter().map(|&(r, have, want)| Line {
+            name: format!("Far view, {}-tile cells", common::summary::scale(r)),
+            have,
+            want,
+        }));
+        lines.push(Line { name: "Terrain built".to_string(), have: self.built.0, want: self.built.1 });
+        lines
     }
 }
+
+/// One thing the world loads: what it is, and how much of it is there.
+pub struct Line {
+    pub name: String,
+    pub have: usize,
+    pub want: usize,
+}
+
+/// How many lines a loading world shows ([`Loading::lines`]): the tiles,
+/// each far level, and the terrain built.
+pub const LINES: usize = common_bevy::summary::LOD_LEVELS.len() + 1;
 
 pub struct ShellPlugin;
 
@@ -126,7 +163,7 @@ impl Plugin for ShellPlugin {
         app.add_systems(Update, (view::do_view, view::end_when_gone).chain().run_if(in_state(InWorld)));
         app.add_systems(Update, view::rejoin.run_if(in_state(Stage::CharacterSelect)));
         app.add_systems(Startup, (menu::setup, screens::setup, credits::setup));
-        app.add_systems(Update, (follow_link, menu::route_keys, menu::draw, credits::draw, screens::draw, screens::show_rtt));
+        app.add_systems(Update, (follow_link, menu::route_keys, menu::draw, credits::draw, screens::draw, screens::draw_lines, screens::show_rtt));
         app.add_systems(Update, track_loading.run_if(in_state(Stage::Loading)));
         app.add_systems(OnEnter(Stage::Loading), start_loading);
         app.add_systems(OnEnter(Stage::Playing), arrive);
@@ -183,32 +220,59 @@ pub fn chunks_streamed(loc: &Loc, loaded: &LoadedChunks) -> (usize, usize) {
     (have, wanted.len())
 }
 
-/// Counts what has arrived of the terrain around the player and what is
-/// still being built, and plays once it has settled.
+/// Counts what has arrived of the terrain around the player, the tiles
+/// and the whole far view, and what is still being built, and plays once
+/// it has all arrived and settled.
+#[allow(clippy::too_many_arguments)]
 fn track_loading(
     mut loading: ResMut<Loading>,
     mut next: ResMut<NextState<Stage>>,
     buffers: Res<InputQueues>,
     locs: Query<&Loc>,
     loaded: Res<LoadedChunks>,
+    summaries: Res<SummaryCache>,
     meshes: Res<SummaryMeshes>,
     time: Res<Time<Real>>,
 ) {
+    let before = (loading.streamed().0, loading.building);
     // The local player is the one entity with an input queue.
     let player = buffers.entities().find_map(|&ent| locs.get(ent).ok());
     if let Some(loc) = player {
         loading.chunks = chunks_streamed(loc, &loaded);
+        let wanted = loading.wanted.get_or_insert_with(|| {
+            let (wx, wz) = flat_top_tile_center(loc.q, loc.r, 1.0);
+            streamed_regions(wx, wz, 0).into_iter().collect()
+        });
+        let levels: Vec<(u32, usize, usize)> = common_bevy::summary::LOD_LEVELS[1..]
+            .iter()
+            .map(|&r| {
+                let of_level = || wanted.iter().filter(move |key| key.r == r);
+                (r, of_level().filter(|key| summaries.contains_region(key)).count(), of_level().count())
+            })
+            .collect();
+        loading.regions = levels.iter().fold((0, 0), |(have, want), level| (have + level.1, want + level.2));
+        loading.levels = levels;
+        let drawn = loading.drawn.get_or_insert_with(|| crate::systems::world::regions_when_streamed(loc).into_iter().collect());
+        let standing = drawn.iter().filter(|key| meshes.states.get(key).is_some_and(|state| state.entity.is_some())).count();
+        let to_stand = drawn.len();
+        loading.built = (standing, to_stand);
     }
     loading.building = meshes.states.values().filter(|s| s.task.is_some()).count() + meshes.queued;
-    loading.building_peak = loading.building_peak.max(loading.building);
+    if (loading.streamed().0, loading.building) != before {
+        loading.since = time.elapsed();
+    }
 
-    let (have, want) = loading.chunks;
+    let (have, want) = loading.streamed();
     let streamed = want > 0 && have == want;
     loading.quiet = if streamed && loading.building == 0 { loading.quiet + 1 } else { 0 };
     if loading.quiet >= QUIET_FRAMES {
         next.set(Stage::Playing);
     } else if time.elapsed() - loading.since > LOADING_LIMIT {
-        warn!("Terrain not settled after {:?}: {have}/{want} chunks, {} builds; playing anyway", LOADING_LIMIT, loading.building);
+        let ((chunks, of_chunks), (regions, of_regions)) = (loading.chunks, loading.regions);
+        warn!(
+            "Nothing of the terrain arrived or was built for {:?}: {chunks}/{of_chunks} chunks, {regions}/{of_regions} far regions, {} builds; playing anyway",
+            LOADING_LIMIT, loading.building
+        );
         next.set(Stage::Playing);
     }
 }
