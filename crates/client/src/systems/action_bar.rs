@@ -224,6 +224,8 @@ pub struct Stands {
     reach: Option<&'static AttackRange>,
     target: Option<&'static Target>,
     attrs: Option<&'static ActorAttributes>,
+    position: Option<&'static common_bevy::components::position::Position>,
+    typ: Option<&'static common_bevy::components::entity_type::EntityType>,
     /// The client's own character, who picks its targets here; another
     /// actor viewed has targets only the server knows
     controlled: Has<Actor>,
@@ -235,15 +237,22 @@ impl StandsItem<'_, '_> {
         self.target.and_then(|target| target.entity)
     }
 
+    /// Whether it is held up by the water where the client has it
+    fn swims(&self, map: &common_bevy::resources::map::Map) -> bool {
+        let draft = common_bevy::components::entity_type::actor::ActorIdentity::draft_of(self.typ, self.status);
+        self.position.is_some_and(|&position| common_bevy::systems::movement::swimming(position, draft, map))
+    }
+
     /// The gate's answer for `ability` at `now` on the game clock, as far
     /// as the client can give it (`gate::admits`), with its target standing
-    /// at `target`. A pool the client holds none of is never short; an
-    /// actor viewed and not controlled is taken to have its target in
-    /// reach.
-    fn asks(&self, tuning: &Tuning, ability: AbilityType, now: Moment, target: Option<&Loc>) -> Result<(), AbilityFailReason> {
+    /// at `target`, and `swimming` or not. A pool the client holds none of
+    /// is never short; an actor viewed and not controlled is taken to have
+    /// its target in reach.
+    fn asks(&self, tuning: &Tuning, ability: AbilityType, now: Moment, target: Option<&Loc>, swimming: bool) -> Result<(), AbilityFailReason> {
         let status = self.status.copied().unwrap_or_default();
         let standing = Standing {
             held: status.is_held(),
+            swimming,
             pinned: status.is_pinned(),
             activating: self.activating.is_some_and(|activating| activating.0.is_some()),
             recharged: self.recharges.is_none_or(|recharges| recharges.is_ready(ability, now)),
@@ -265,6 +274,7 @@ pub struct Gate<'w, 's> {
     tuning: Res<'w, Tuning>,
     server: Res<'w, crate::resources::Server>,
     time: Res<'w, Time>,
+    map: Res<'w, common_bevy::resources::map::Map>,
     locs: Query<'w, 's, &'static Loc>,
 }
 
@@ -277,7 +287,7 @@ impl Gate<'_, '_> {
     /// The gate's answer for `ability` used by the actor that `stands` now
     fn asks(&self, stands: &StandsItem<'_, '_>, ability: AbilityType) -> Result<(), AbilityFailReason> {
         let target = stands.targets().and_then(|target| self.locs.get(target).ok());
-        stands.asks(&self.tuning, ability, self.now(), target)
+        stands.asks(&self.tuning, ability, self.now(), target, stands.swims(&self.map))
     }
 }
 
@@ -456,7 +466,7 @@ mod tests {
         let target = target.map(|(q, r)| Loc::from_qrz(q, r, 0));
         let mut query = world.query::<Stands>();
         let stands = query.get(&world, ent).unwrap();
-        AbilityState(stands.asks(&Tuning::DEFAULT, ability, Moment::from_millis(1_000), target.as_ref()))
+        AbilityState(stands.asks(&Tuning::DEFAULT, ability, Moment::from_millis(1_000), target.as_ref(), false))
     }
 
     fn refused(reason: AbilityFailReason) -> AbilityState {

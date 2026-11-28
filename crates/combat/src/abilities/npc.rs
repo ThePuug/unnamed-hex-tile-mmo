@@ -155,6 +155,7 @@ impl Abilities<'_, '_> {
         let (activating, recharges) = self.skills.get(ent).map_or_else(|_| (false, default()), |(_, activating, recharges)| (activating.0.is_some(), recharges.clone()));
         let lands_in = foe.and_then(|foe| foe.activation)
             .map(|activation| now.until(skill.judged(&self.dice, ent, &activation)).as_secs_f32());
+        let status = self.statuses.get(ent).ok().copied().unwrap_or_default();
         Some(View {
             tuning,
             ability,
@@ -166,7 +167,8 @@ impl Abilities<'_, '_> {
             now,
             activating,
             recharges,
-            status: self.statuses.get(ent).ok().copied().unwrap_or_default(),
+            swimming: self.swims(ent, &status),
+            status,
             reach,
             leap: attrs.leap_tiles(&tuning) as i32,
             leap_room: self.leap_room(ent, loc, reach, target),

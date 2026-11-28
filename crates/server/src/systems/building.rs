@@ -239,15 +239,15 @@ impl Site<'_, '_> {
 
 /// Answers each build a player asks for: a construct on the tile it
 /// faces, what stands there taken down, or a fixture raised for a hub on
-/// the tile named. Where the tile and the bag allow it, the player is set
-/// to work.
+/// the tile named. Where the tile and the bag allow it, and the player is
+/// on its feet, not swimming, it is set to work.
 pub fn try_build(
     mut reader: MessageReader<Try>,
     settings: Res<common_bevy::settings::Settings>,
     mut site: Site,
     time: Res<Time>,
     mut commands: Commands,
-    mut players: Query<(&Loc, &mut Heading, &mut common_bevy::components::Turn, &mut Position, &mut Inventory, &Character, Has<Working>, Has<Building>)>,
+    mut players: Query<(&Loc, &mut Heading, &mut common_bevy::components::Turn, &mut Position, &mut Inventory, &Character, Has<Working>, Has<Building>, Option<&common_bevy::components::entity_type::EntityType>, Option<&common_bevy::components::status::Status>)>,
 ) {
     for message in reader.read() {
         let (ent, job, named) = match message {
@@ -255,11 +255,12 @@ pub fn try_build(
             Try { event: Event::Raise { ent, fixture, q, r } } => (*ent, Job::Raise(*fixture), Some((*q, *r))),
             _ => continue,
         };
-        let Ok((loc, mut heading, mut turn, mut position, mut held, &Character(who), working, building)) = players.get_mut(ent) else {
+        let Ok((loc, mut heading, mut turn, mut position, mut held, &Character(who), working, building, typ, status)) = players.get_mut(ent) else {
             warn!("build: {ent} is not a player");
             continue;
         };
-        if working || building {
+        let draft = common_bevy::components::entity_type::actor::ActorIdentity::draft_of(typ, status);
+        if working || building || common_bevy::systems::movement::swimming(*position, draft, site.ground.map()) {
             continue;
         }
         // A fixture goes on the nearest tile its hub takes it on, as the ground lies now

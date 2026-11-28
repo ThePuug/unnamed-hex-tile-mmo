@@ -41,6 +41,7 @@ pub fn word(reason: AbilityFailReason) -> &'static str {
     match reason {
         AbilityFailReason::NoTargets => "No target",
         AbilityFailReason::Held => "Stunned",
+        AbilityFailReason::Swimming => "Swimming",
         AbilityFailReason::Activating => "Busy",
         AbilityFailReason::Recharging => "Recharging",
         AbilityFailReason::NoEndurance => "No endurance",
@@ -57,6 +58,7 @@ fn why(reason: AbilityFailReason) -> &'static str {
     match reason {
         AbilityFailReason::NoTargets => "you have no target",
         AbilityFailReason::Held => "you are stunned",
+        AbilityFailReason::Swimming => "you are swimming",
         AbilityFailReason::Activating => "you are busy with another skill",
         AbilityFailReason::Recharging => "it is recharging",
         AbilityFailReason::NoEndurance => "you have too little endurance",

@@ -55,6 +55,8 @@ pub struct View {
     pub recharges: Recharges,
     /// Its own timed effects
     pub status: Status,
+    /// It is held up by the water (`movement::swimming`)
+    pub swimming: bool,
     /// Its own reach, in tiles
     pub reach: i32,
     /// Tiles a Leap carries it
@@ -279,12 +281,13 @@ fn incoming(view: &View) -> f32 {
 
 // --- Any skill ---
 
-/// The gate would let the skill through on its foe now: it unheld and
-/// activating nothing, the skill recharged and paid for, its foe within
+/// The gate would let the skill through on its foe now: it unheld, not
+/// swimming and activating nothing, the skill recharged and paid for, its foe within
 /// its reach and arc for one with a reach
 const USABLE: Considered = step("usable", |view| {
     let standing = Standing {
         held: view.status.is_held(),
+        swimming: view.swimming,
         pinned: view.status.is_pinned(),
         activating: view.activating,
         recharged: view.recharges.is_ready(view.ability, view.now),
@@ -440,6 +443,7 @@ mod tests {
             activating: false,
             recharges: Recharges::default(),
             status: Status::default(),
+            swimming: false,
             reach: 2,
             leap: 9,
             leap_room: 1.0,

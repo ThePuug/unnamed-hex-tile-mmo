@@ -540,7 +540,8 @@ impl Looters<'_, '_> {
     }
 }
 
-/// Answers each gather a player asks for: the slot must lie in its reach.
+/// Answers each gather a player asks for: the slot must lie in its reach,
+/// and the player be on its feet, not swimming.
 /// A pile there opens the player's window on its tile at once, where the
 /// tile holds something it may take. Something gatherable there sets the
 /// player to work on it, unless it is at work already.
@@ -549,16 +550,21 @@ pub fn try_gather(
     mut looters: Looters,
     time: Res<Time>,
     nntree: Res<common_bevy::plugins::nntree::NNTree>,
-    mut players: Query<(&Loc, &mut Heading, &mut common_bevy::components::Turn, &mut Position, Has<Working>)>,
+    mut players: Query<(&Loc, &mut Heading, &mut common_bevy::components::Turn, &mut Position, Has<Working>, Option<&EntityType>, Option<&common_bevy::components::status::Status>)>,
 ) {
     let now = Moment::ZERO + time.elapsed();
     for message in reader.read() {
         let Try { event: Event::Gather { ent, q, r, slot } } = message else { continue };
         let (ent, q, r, slot) = (*ent, *q, *r, *slot as usize);
-        let Ok((loc, heading, _, position, working)) = players.get(ent) else {
+        let Ok((loc, heading, _, position, working, typ, status)) = players.get(ent) else {
             warn!("gather: {ent} is not a player");
             continue;
         };
+        let draft = common_bevy::components::entity_type::actor::ActorIdentity::draft_of(typ, status);
+        if common_bevy::systems::movement::swimming(*position, draft, &looters.ground.map) {
+            info!("gather: {ent} asked swimming");
+            continue;
+        }
         let (loc, heading, position) = (**loc, *heading, *position);
         if !in_reach(loc, heading, q, r) || slot >= common::TILE_SLOTS as usize {
             info!("gather: {ent} at {loc:?} asked out of reach for slot {slot} of ({q}, {r})");

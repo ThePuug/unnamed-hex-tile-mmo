@@ -16,6 +16,9 @@ pub enum AbilityFailReason {
     NoTargets,
     /// The caster is stunned, or held while a drag slides it
     Held,
+    /// The caster is swimming, held up by the water: no skill or swing
+    /// is used afloat
+    Swimming,
     /// The caster is activating a skill
     Activating,
     /// The skill is recharging
@@ -38,6 +41,8 @@ pub enum AbilityFailReason {
 #[derive(Clone, Copy, Debug)]
 pub struct Standing {
     pub held: bool,
+    /// Held up by the water (`movement::swimming`)
+    pub swimming: bool,
     pub pinned: bool,
     pub activating: bool,
     /// The skill asked for is recharged
@@ -46,7 +51,8 @@ pub struct Standing {
 }
 
 /// What the gate asks of `ability` before it does anything, in order: its
-/// caster unheld, activating nothing unless the skill is a stance, the
+/// caster unheld and not swimming, activating nothing unless the skill is
+/// a stance, the
 /// skill recharged and its endurance held (`standing`); for one that is
 /// only a move, no pin; for
 /// one with a reach (`AbilityType::reach`), a target at `foe`'s distance and
@@ -55,6 +61,9 @@ pub struct Standing {
 pub fn admits(tuning: &Tuning, ability: AbilityType, standing: &Standing, attrs: &ActorAttributes, reach: i32, foe: Option<(i32, bool)>) -> Result<(), AbilityFailReason> {
     if standing.held {
         return Err(AbilityFailReason::Held);
+    }
+    if standing.swimming {
+        return Err(AbilityFailReason::Swimming);
     }
     if standing.activating && ability.kind() != SkillKind::Stance {
         return Err(AbilityFailReason::Activating);
@@ -84,7 +93,7 @@ pub fn admits(tuning: &Tuning, ability: AbilityType, standing: &Standing, attrs:
 mod tests {
     use super::*;
 
-    const FREE: Standing = Standing { held: false, pinned: false, activating: false, recharged: true, endurance: f32::INFINITY };
+    const FREE: Standing = Standing { held: false, swimming: false, pinned: false, activating: false, recharged: true, endurance: f32::INFINITY };
 
     fn asked(ability: AbilityType, standing: Standing, foe: Option<(i32, bool)>) -> Result<(), AbilityFailReason> {
         admits(&Tuning::DEFAULT, ability, &standing, &ActorAttributes::default(), 2, foe)
@@ -102,9 +111,11 @@ mod tests {
     fn it_asks_of_the_caster_before_the_skill_and_of_the_skill_before_its_target() {
         let near = Some((1, true));
         assert_eq!(asked(AbilityType::Frenzy, FREE, near), Ok(()));
-        let all = Standing { held: true, pinned: true, activating: true, recharged: false, endurance: 0.0 };
+        let all = Standing { held: true, swimming: true, pinned: true, activating: true, recharged: false, endurance: 0.0 };
         assert_eq!(asked(AbilityType::Frenzy, all, None), Err(AbilityFailReason::Held));
-        assert_eq!(asked(AbilityType::Frenzy, Standing { held: false, ..all }, None), Err(AbilityFailReason::Activating));
+        assert_eq!(asked(AbilityType::Frenzy, Standing { held: false, ..all }, None), Err(AbilityFailReason::Swimming));
+        assert_eq!(asked(AbilityType::Frenzy, Standing { held: false, swimming: false, ..all }, None), Err(AbilityFailReason::Activating));
+        assert_eq!(asked(AbilityType::AutoAttack, Standing { swimming: true, ..FREE }, near), Err(AbilityFailReason::Swimming), "nor a swing");
         assert_eq!(asked(AbilityType::Frenzy, Standing { recharged: false, ..FREE }, None), Err(AbilityFailReason::Recharging));
         assert_eq!(asked(AbilityType::Frenzy, FREE, None), Err(AbilityFailReason::NoTargets));
         assert_eq!(asked(AbilityType::Frenzy, FREE, Some((9, true))), Err(AbilityFailReason::OutOfRange));

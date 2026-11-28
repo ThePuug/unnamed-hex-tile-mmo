@@ -134,6 +134,9 @@ pub struct Abilities<'w, 's> {
     pub engagements: Query<'w, 's, &'static Engagement>,
     pub loadouts: Query<'w, 's, &'static common_bevy::components::loadout::Loadout>,
     pub positions: Query<'w, 's, &'static common_bevy::components::position::Position>,
+    /// Who each actor is, which with what it rides says how deep water
+    /// floats it
+    pub bodies: Query<'w, 's, &'static EntityType>,
     /// Every rune standing, where, and whose: a strike's target where it
     /// names one ([`Abilities::foe`]), and the tiles a rune is refused on
     pub runes: Query<'w, 's, (Entity, &'static Loc, &'static mut crate::runes::RuneStone)>,
@@ -283,12 +286,20 @@ impl Abilities<'_, '_> {
         })
     }
 
+    /// Whether `ent`, under `status`, is held up by the water where it
+    /// stands
+    pub fn swims(&self, ent: Entity, status: &Status) -> bool {
+        let draft = common_bevy::components::entity_type::actor::ActorIdentity::draft_of(self.bodies.get(ent).ok(), Some(status));
+        self.positions.get(ent).is_ok_and(|&position| common_bevy::systems::movement::swimming(position, draft, &self.map))
+    }
+
     /// How `ent` stands as the gate asks `ability` of it at `now`
     pub fn standing(&self, ent: Entity, ability: AbilityType, status: &Status, now: Moment) -> Standing {
         let (activating, recharged) = self.skills.get(ent)
             .map_or((false, true), |(_, activating, recharges)| (activating.0.is_some(), recharges.is_ready(ability, now)));
         Standing {
             held: status.is_held(),
+            swimming: self.swims(ent, status),
             pinned: status.is_pinned(),
             activating,
             recharged,
