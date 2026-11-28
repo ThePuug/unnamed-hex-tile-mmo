@@ -304,3 +304,40 @@ fn sea_change() {
     }
     println!("done in {:.0}s", started.elapsed().as_secs_f64());
 }
+
+/// The shore nearest a tile: the nearest tile of the sea, sought on a
+/// coarse grid and then tile by tile round the nearest found, and the land
+/// tile beside it. `SEA_FROM="q,r"` names the tile, the haven by default.
+///
+/// Run: `cargo test -p world --features inspect --test sea_probe nearest_shore -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn nearest_shore() {
+    let from: (i64, i64) = match std::env::var("SEA_FROM") {
+        Ok(s) => {
+            let (q, r) = s.split_once(',').expect("a tile is q,r");
+            (q.trim().parse().expect("a whole q"), r.trim().parse().expect("a whole r"))
+        }
+        Err(_) => (HAVEN.0 as i64, HAVEN.1 as i64),
+    };
+    let (fx, fy) = hex_to_world(from.0 as i32, from.1 as i32);
+    let ground = StackGround::new(WORLD_SEED, (from.0 as i32, from.1 as i32), 20_000.0);
+    let sea = |q: i64, r: i64| ground.height(q, r) < 0.0 && ground.ocean(q, r);
+    let far = |q: i64, r: i64| {
+        let (x, y) = hex_to_world(q as i32, r as i32);
+        (x - fx).hypot(y - fy)
+    };
+    let nearest = |tiles: &mut dyn Iterator<Item = (i64, i64)>| tiles.filter(|&(q, r)| sea(q, r)).min_by(|a, b| far(a.0, a.1).total_cmp(&far(b.0, b.1)));
+    let (step, reach) = (27i64, 12_000i64 / 27);
+    let coarse = nearest(&mut (-reach..=reach).flat_map(|a| (-reach..=reach).map(move |b| (from.0 + a * step, from.1 + b * step)))).expect("sea within reach");
+    // The nearest sea tile lies no further than the coarse one, and within
+    // a coarse step of some sample nearer than it: round the coarse find.
+    let (cq, cr) = coarse;
+    let fine = nearest(&mut (-2 * step..=2 * step).flat_map(|a| (-2 * step..=2 * step).map(move |b| (cq + a, cr + b)))).expect("the coarse find is sea");
+    let land = DIRECTIONS
+        .iter()
+        .map(|&(dq, dr)| (fine.0 + dq as i64, fine.1 + dr as i64))
+        .filter(|&(q, r)| ground.height(q, r) >= 0.0)
+        .min_by(|a, b| far(a.0, a.1).total_cmp(&far(b.0, b.1)));
+    println!("from tile {from:?}: the nearest sea tile found is {fine:?}, {:.0} tiles off; the land beside it {land:?}, standing {:.1}", far(fine.0, fine.1), land.map_or(f64::NAN, |(q, r)| ground.height(q, r)));
+}
